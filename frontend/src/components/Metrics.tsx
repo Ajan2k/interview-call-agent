@@ -1,119 +1,85 @@
-import React from "react";
-import { Target } from "lucide-react";
+import { useState, useEffect, type ReactNode } from "react";
+import {
+  Phone, PhoneIncoming, PhoneOutgoing, CalendarCheck,
+  Flame, Clock, PhoneForwarded, ThermometerSun,
+} from "lucide-react";
 
-interface MetricsProps {
-  totalCalls: number;
-  activeCampaigns: number;
-  successRate: number;
-  avgDuration: number; // in seconds
-  dialedToday: number;
-  incomingCallsCount: number;
+interface Summary {
+  total: number;
+  incoming: number;
+  outgoing: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  incomplete: number;
+  demos_booked: number;
+  total_duration_sec: number;
+  avg_duration_sec: number;
 }
 
-export const Metrics: React.FC<MetricsProps> = ({
-  totalCalls,
-  activeCampaigns,
-  successRate,
-  avgDuration,
-  dialedToday,
-  incomingCallsCount,
-}) => {
-  const formatDuration = (sec: number) => {
-    const mins = Math.floor(sec / 60);
-    const secs = sec % 60;
-    return `${mins}m ${secs}s`;
-  };
+function fmtDur(sec: number) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s}s`;
+}
 
-  // Reusable card component mimicking the requested UI
-  const PriorityCard = ({ title, actual, target, actualColor = "text-yellow-500", showLine = true }: any) => (
-    <div className="bg-white rounded-lg p-4 flex flex-col justify-between shadow-sm border border-gray-200 h-[120px] hover:shadow-md transition-shadow">
-      <div>
-        <div className="flex items-center justify-between mb-2">
-           <Target className="w-3.5 h-3.5 text-gray-500" strokeWidth={2.5} />
-        </div>
-        <h3 className="text-xs font-bold text-slate-800 leading-snug">{title}</h3>
+function Card({ icon, label, value, sub, accent }: { icon: ReactNode; label: string; value: string | number; sub?: string; accent: string }) {
+  return (
+    <div className="bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg border border-white/40 h-[120px] flex flex-col justify-between hover:shadow-xl transition-shadow">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[11px] font-bold text-slate-600 leading-snug">{label}</h3>
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${accent}`}>{icon}</div>
       </div>
-      <div className="flex justify-between items-end mt-auto">
-        <div className="flex gap-5">
-          <div>
-            <p className="text-[10px] text-gray-500 mb-0.5">Actual</p>
-            <p className={`text-xs font-bold ${actualColor}`}>{actual}</p>
-          </div>
-          {target && (
-            <div>
-              <p className="text-[10px] text-gray-500 mb-0.5">Target</p>
-              <p className="text-xs font-bold text-slate-700">{target}</p>
-            </div>
-          )}
-        </div>
-        {showLine && (
-          <div className="w-3 h-[2px] bg-gray-400 rounded-full mb-1"></div>
-        )}
+      <div>
+        <p className="text-3xl font-black text-slate-800 leading-none">{value}</p>
+        {sub && <p className="text-[10px] text-slate-400 font-semibold mt-1">{sub}</p>}
       </div>
     </div>
   );
+}
+
+export const Metrics = () => {
+  const [s, setS] = useState<Summary | null>(null);
+  const [pendingCallbacks, setPendingCallbacks] = useState(0);
+
+  useEffect(() => {
+    const fetchData = () => {
+      fetch("/api/report")
+        .then((r) => r.json())
+        .then((d) => d.summary && setS(d.summary))
+        .catch(() => {});
+      fetch("/api/callbacks")
+        .then((r) => r.json())
+        .then((d) => Array.isArray(d) && setPendingCallbacks(d.filter((c: any) => !c.done).length))
+        .catch(() => {});
+    };
+    fetchData();
+    const iv = setInterval(fetchData, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const v = s || { total: 0, incoming: 0, outgoing: 0, hot: 0, warm: 0, cold: 0, incomplete: 0, demos_booked: 0, total_duration_sec: 0, avg_duration_sec: 0 };
 
   return (
-    <div className="w-full lg:w-4/5 xl:w-[70%] mt-8 pr-4 md:pr-8">
-      <h2 className="text-white font-bold text-sm mb-6 tracking-wide drop-shadow-md">My Priorities</h2>
+    <div className="w-full lg:w-4/5 xl:w-[72%] mt-8 pr-4 md:pr-8">
+      <h2 className="text-white font-bold text-sm mb-6 tracking-wide drop-shadow-md">Call Center Overview</h2>
       <div id="metrics-container" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
-        
-        <PriorityCard 
-          title="Calls Dialed Today (Outbound)" 
-          actual={dialedToday} 
-          target="150" 
-          actualColor="text-yellow-500"
-        />
-        
-        <PriorityCard 
-          title="Success Rate (Benchmark %)" 
-          actual={`${successRate.toFixed(1)}%`} 
-          target="75.0%" 
-          actualColor="text-emerald-600"
-        />
-        
-        <PriorityCard 
-          title="Avg Call Duration (minutes)" 
-          actual={formatDuration(avgDuration)} 
-          target="1m 30s" 
-          actualColor="text-yellow-500"
-        />
-        
-        <PriorityCard 
-          title="Active Campaigns (running)" 
-          actual={activeCampaigns} 
-          target="5" 
-          actualColor="text-red-500"
-        />
-        
-        <PriorityCard 
-          title="Incoming Calls Answered" 
-          actual={incomingCallsCount} 
-          target="50" 
-          actualColor="text-emerald-600"
-        />
-        
-        <PriorityCard 
-          title="Total Contacts Synced" 
-          actual={totalCalls} 
-          target={Math.max(200, totalCalls + 50)} 
-          actualColor="text-yellow-500"
-        />
-        
-        <PriorityCard 
-          title="Agent Utilization Rate %" 
-          actual="85.4%" 
-          target="90.0%" 
-          actualColor="text-emerald-600"
-        />
-        
-        <PriorityCard 
-          title="System Uptime %" 
-          actual="99.9%" 
-          target="99.9%" 
-          actualColor="text-emerald-600"
-        />
-        
+        <Card icon={<Phone className="w-4 h-4 text-white" />} accent="bg-slate-700"
+          label="Total Calls" value={v.total} sub="all AI conversations" />
+        <Card icon={<PhoneIncoming className="w-4 h-4 text-white" />} accent="bg-indigo-500"
+          label="Incoming Calls" value={v.incoming} sub="customers called in" />
+        <Card icon={<PhoneOutgoing className="w-4 h-4 text-white" />} accent="bg-purple-500"
+          label="Outgoing Calls" value={v.outgoing} sub="agent dialed out" />
+        <Card icon={<CalendarCheck className="w-4 h-4 text-white" />} accent="bg-emerald-500"
+          label="Demos Booked" value={v.demos_booked} sub="scheduled from calls" />
+        <Card icon={<Flame className="w-4 h-4 text-white" />} accent="bg-rose-500"
+          label="Hot Leads" value={v.hot} sub="very interested" />
+        <Card icon={<ThermometerSun className="w-4 h-4 text-white" />} accent="bg-amber-500"
+          label="Warm Leads" value={v.warm} sub="interested / callback" />
+        <Card icon={<PhoneForwarded className="w-4 h-4 text-white" />} accent="bg-orange-500"
+          label="Pending Callbacks" value={pendingCallbacks} sub="to call back later" />
+        <Card icon={<Clock className="w-4 h-4 text-white" />} accent="bg-sky-500"
+          label="Avg Call Duration" value={fmtDur(v.avg_duration_sec)} sub="per conversation" />
       </div>
     </div>
   );

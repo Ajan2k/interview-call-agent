@@ -13,6 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from groq import AsyncGroq
 from openai import AsyncOpenAI
 from logging_config import get_conversation_logger
+import database as db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("voice")
@@ -23,7 +24,9 @@ router = APIRouter()
 SPEECH_THRESHOLD = 1000
 SILENCE_THRESHOLD = 500
 MIN_SPEECH_DURATION_MS = 300
-SILENCE_DURATION_MS = 700
+# How long the caller must stay quiet before we treat the utterance as finished.
+# Too short cuts callers off mid-question (the LLM then answers a half-question).
+SILENCE_DURATION_MS = 900
 # Higher than SPEECH_THRESHOLD: line/speaker echo of the agent's own TTS tends to come
 # back quieter than a caller actually talking, so barge-in needs a stricter bar to
 # avoid the agent interrupting itself.
@@ -36,6 +39,10 @@ IDLE_TIMEOUT_SECS = 10
 MAX_CALL_DURATION_SECS = int(os.getenv("MAX_CALL_DURATION_SECS", "300"))
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
+SARVAM_LLM_BASE_URL = "https://api.sarvam.ai/v1"
+CEREBRAS_LLM_BASE_URL = "https://api.cerebras.ai/v1"
+GEMINI_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 COMPANY_NAME = "Daffytel Technologies"
 AGENT_NAME = "Daffy"
@@ -44,27 +51,23 @@ AGENT_NAME = "Daffy"
 # Set to "inbound" when the customer is calling in (support/sales inquiry)
 CALL_MODE = "outbound"  # <-- change this to switch modes
 
-def get_system_persona(lang_name: str) -> str:
-    script_filename = f"{lang_name.lower()}_system_prompt.txt"
-    script_path = os.path.join(os.path.dirname(__file__), "Scripts", script_filename)
-
-    default_script = f"""You are Amira, a friendly, warm, and highly conversational AI assistant for {COMPANY_NAME}, a software company.
-Your job is to help callers understand how our AI Voice Agents and AI Chatbots can automate their customer support, sales, appointment booking, and daily office work.
-Rules:
-- Keep replies VERY SHORT and casual (1-2 sentences for phone).
-- Speak using natural everyday slang and colloquial phrasing. DO NOT use formal, robotic, or textbook translations. Speak like a friendly local!
-- If asked personal questions (e.g. age), respond casually ("I'm Amira, your virtual assistant!").
-- Stay on topic (software and AI automation); gently steer back if the caller goes off-topic."""
-    
-    if os.path.exists(script_path):
-        try:
-            with open(script_path, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except Exception as e:
-            logger.error(f"Error reading script file {script_filename}: {e}")
-            return default_script
-    else:
-        return default_script
+def load_script_prompt(call_mode: str, lang_name: str, few_shot: str) -> str:
+    """Load the sales script for this call mode from Scripts/outbound_prompt.txt or
+    Scripts/inbound_prompt.txt, filling in {lang_name} and {few_shot} placeholders."""
+    filename = "outbound_prompt.txt" if call_mode == "outbound" else "inbound_prompt.txt"
+    script_path = os.path.join(os.path.dirname(__file__), "Scripts", filename)
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+    except Exception as e:
+        logger.error(f"[SCRIPT] Failed to read {filename}: {e} — using minimal fallback prompt.")
+        content = (
+            f"You are {AGENT_NAME}, a friendly human-sounding salesperson from {COMPANY_NAME} selling an"
+            " AI Calling Agent that attends business calls 24/7. Ask ONE short question at a time,"
+            " book a free demo, and append [END_CALL] with a [LEAD: status=...] tag in your final goodbye reply.\n"
+            "{few_shot}\nReply ONLY in {lang_name}. MAX 1-2 short sentences."
+        )
+    return content.replace("{lang_name}", lang_name).replace("{few_shot}", few_shot)
 
 def create_wav_buffer(pcm_bytes: bytes, sample_rate=16000) -> bytes:
     """Wrap raw PCM bytes into a valid WAV file in-memory."""
@@ -102,45 +105,150 @@ def strip_wav_header(audio_bytes: bytes, target_rate: int = 16000) -> bytes:
         logger.error(f"[TTS] Failed to parse WAV header: {e}")
         return audio_bytes[44:] if len(audio_bytes) > 44 else audio_bytes
 
+RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), "recordings")
+CALLS_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "calls.jsonl")
+MEETINGS_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "meetings.jsonl")
+
+
+class CallRecorder:
+    """Records both sides of a call as 16 kHz mono PCM tracks aligned by wall clock,
+    then mixes them into a single WAV. The caller's mic frames stream continuously,
+    so they form the timeline; agent audio is padded to its scheduled playback time."""
+
+    BYTES_PER_SEC = 32000  # 16000 Hz * 2 bytes
+
+    def __init__(self, call_id: str):
+        self.call_id = call_id
+        self.start_time = time.time()
+        self.caller_track = bytearray()
+        self.agent_track = bytearray()
+
+    def _pad_to(self, track: bytearray, at_time: float):
+        target = int((at_time - self.start_time) * self.BYTES_PER_SEC)
+        target -= target % 2
+        if target > len(track):
+            track.extend(b"\x00" * (target - len(track)))
+
+    def add_caller(self, pcm: bytes):
+        self.caller_track.extend(pcm)
+
+    def add_agent(self, pcm: bytes, at_time: float):
+        self._pad_to(self.agent_track, at_time)
+        self.agent_track.extend(pcm)
+
+    def save(self) -> str | None:
+        try:
+            if not self.caller_track and not self.agent_track:
+                return None
+            n = max(len(self.caller_track), len(self.agent_track))
+            caller = bytes(self.caller_track) + b"\x00" * (n - len(self.caller_track))
+            agent = bytes(self.agent_track) + b"\x00" * (n - len(self.agent_track))
+            mixed = audioop.add(caller, agent, 2)
+            os.makedirs(RECORDINGS_DIR, exist_ok=True)
+            filename = f"{self.call_id}.wav"
+            path = os.path.join(RECORDINGS_DIR, filename)
+            with wave.open(path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(mixed)
+            logger.info(f"[RECORDING] Saved {filename} ({len(mixed)} bytes, {len(mixed)/self.BYTES_PER_SEC:.1f}s)")
+            return filename
+        except Exception as e:
+            logger.error(f"[RECORDING] Failed to save: {e}")
+            return None
+
+
+def add_transcript(session_state: dict, role: str, text: str, lang: str):
+    """Append one chat turn to the per-call transcript (shown in the dashboard's
+    conversation viewer). role is 'caller' or 'agent'."""
+    text = (text or "").strip()
+    if not text:
+        return
+    session_state.setdefault("transcript", []).append({
+        "role": role,
+        "text": text,
+        "lang": lang,
+        "time": time.strftime("%H:%M:%S"),
+    })
+
+
 async def process_utterance(utterance_bytes: bytes, session_state: dict, websocket: WebSocket):
+    # Utterance captured just before the goodbye triggered call-ending — drop it,
+    # otherwise the agent speaks a duplicate reply over its own goodbye.
+    if session_state.get("ending"):
+        logger.info("[PIPELINE] Call is ending — dropping late utterance.")
+        return
+
     sarvam_key = os.getenv("SARVAM_API_KEY")
     groq_key = os.getenv("GROQ_API_KEY")
-    
-    if not groq_key:
-        logger.error("[PIPELINE] Missing GROQ_API_KEY in environment.")
+
+    if not groq_key and not sarvam_key:
+        logger.error("[PIPELINE] Missing both SARVAM_API_KEY and GROQ_API_KEY in environment.")
         return
-        
+
     try:
         t_start = time.time()
-        
-        # 1. ASR — Groq Whisper (free, fast, excellent Indian language support)
+
         wav_data = create_wav_buffer(utterance_bytes)
-        logger.info(f"[ASR] Sending {len(wav_data)} bytes of WAV to Groq Whisper.")
-        
-        # Language code mapping: Whisper short codes → BCP-47
+
+        # Language code mapping: Whisper short codes → BCP-47 (Groq fallback path)
         WHISPER_LANG_MAP = {
             "ta": "ta-IN", "hi": "hi-IN", "te": "te-IN",
             "kn": "kn-IN", "ml": "ml-IN", "en": "en-IN",
             "mr": "hi-IN",  # Marathi → treat as Hindi for now
         }
-        
-        try:
-            asr_client = AsyncGroq(api_key=groq_key)
-            transcription = await asr_client.audio.transcriptions.create(
-                file=("audio.wav", wav_data),
-                model="whisper-large-v3-turbo",
-                response_format="verbose_json",
-                temperature=0.0,
-            )
-            transcript = (transcription.text or "").strip()
-            detected_lang_short = getattr(transcription, "language", "en") or "en"
-            lang_code = WHISPER_LANG_MAP.get(detected_lang_short, "en-IN")
-            logger.info(f"[ASR] Transcript: '{transcript}' (Lang: {lang_code})")
-        except Exception as asr_err:
-            logger.error(f"[ASR] Groq Whisper error: {asr_err}")
-            await speak_fallback(websocket, session_state)
-            return
-        
+
+        transcript = None
+        lang_code = None
+
+        # 1a. ASR — Sarvam Saarika (Indic-specialised, auto language detection,
+        # returns BCP-47 codes directly; far fewer misdetections than Whisper)
+        if sarvam_key:
+            try:
+                stt_model = os.getenv("SARVAM_STT_MODEL", "saarika:v2.5")
+                logger.info(f"[ASR] Sending {len(wav_data)} bytes of WAV to Sarvam {stt_model}.")
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        SARVAM_STT_URL,
+                        headers={"api-subscription-key": sarvam_key},
+                        files={"file": ("audio.wav", wav_data, "audio/wav")},
+                        data={"model": stt_model, "language_code": "unknown"},
+                        timeout=15.0,
+                    )
+                if res.status_code == 200:
+                    j = res.json()
+                    transcript = (j.get("transcript") or "").strip()
+                    lang_code = j.get("language_code") or "en-IN"
+                    logger.info(f"[ASR] Sarvam transcript: '{transcript}' (Lang: {lang_code})")
+                else:
+                    logger.error(f"[ASR] Sarvam error {res.status_code}: {res.text[:200]} — falling back to Groq Whisper.")
+            except Exception as e:
+                logger.error(f"[ASR] Sarvam exception: {e} — falling back to Groq Whisper.")
+
+        # 1b. ASR fallback — Groq Whisper
+        if lang_code is None:
+            if not groq_key:
+                await speak_fallback(websocket, session_state)
+                return
+            logger.info(f"[ASR] Sending {len(wav_data)} bytes of WAV to Groq Whisper.")
+            try:
+                asr_client = AsyncGroq(api_key=groq_key)
+                transcription = await asr_client.audio.transcriptions.create(
+                    file=("audio.wav", wav_data),
+                    model="whisper-large-v3-turbo",
+                    response_format="verbose_json",
+                    temperature=0.0,
+                )
+                transcript = (transcription.text or "").strip()
+                detected_lang_short = getattr(transcription, "language", "en") or "en"
+                lang_code = WHISPER_LANG_MAP.get(detected_lang_short, "en-IN")
+                logger.info(f"[ASR] Transcript: '{transcript}' (Lang: {lang_code})")
+            except Exception as asr_err:
+                logger.error(f"[ASR] Groq Whisper error: {asr_err}")
+                await speak_fallback(websocket, session_state)
+                return
+
         if not transcript:
             return
 
@@ -222,11 +330,48 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
                 logger.info(f"[ASR] Explicit override detected for {code}: forced + LOCKED session to {code}")
                 break
 
-        convo_logger.info(f"CALLER ({current_lang}): {transcript}")
+        # ASR takes ~1s — the call may have started ending while we transcribed
+        if session_state.get("ending"):
+            logger.info("[PIPELINE] Call ended during ASR — dropping utterance.")
+            return
 
-        # 2. LLM Provider (Groq llama-3.3-70b-versatile)
-        llm_client = AsyncGroq(api_key=groq_key, max_retries=0)
-        model_name = "llama-3.3-70b-versatile"
+        convo_logger.info(f"CALLER ({current_lang}): {transcript}")
+        add_transcript(session_state, "caller", transcript, current_lang)
+
+        # 2. LLM provider. Best free option (tested 2026-07): Gemini flash-lite —
+        # ~1s latency, clean Tanglish, follows the control markers. Fallback chain
+        # on error: Sarvam-30b → Groq 8b. Override with LLM_PROVIDER.
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        cerebras_key = os.getenv("CEREBRAS_API_KEY")
+        if gemini_key:
+            default_provider = "gemini"
+        elif cerebras_key:
+            default_provider = "cerebras"
+        else:
+            default_provider = "groq"
+        llm_provider = os.getenv("LLM_PROVIDER", default_provider).lower()
+        if llm_provider == "gemini" and gemini_key:
+            llm_client = AsyncOpenAI(base_url=GEMINI_LLM_BASE_URL, api_key=gemini_key, max_retries=0)
+            # NOTE: use the "-latest" aliases — fixed-version models (gemini-2.5-*)
+            # are closed to new accounts. flash-lite is fast and non-thinking;
+            # gemini-flash-latest "thinks" and burns the token budget mid-sentence.
+            model_name = os.getenv("GEMINI_LLM_MODEL", "gemini-flash-lite-latest")
+            llm_max_tokens = 400
+        elif llm_provider == "cerebras" and cerebras_key:
+            llm_client = AsyncOpenAI(base_url=CEREBRAS_LLM_BASE_URL, api_key=cerebras_key, max_retries=0)
+            # Cerebras dropped Llama from its lineup (2026): current models are
+            # zai-glm-4.7, gpt-oss-120b, gemma-4-31b
+            model_name = os.getenv("CEREBRAS_LLM_MODEL", "zai-glm-4.7")
+            # Tamil/Indic script is token-heavy — too small a cap cuts replies mid-sentence
+            llm_max_tokens = 400
+        elif llm_provider == "sarvam" and sarvam_key:
+            llm_client = AsyncOpenAI(base_url=SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
+            model_name = os.getenv("SARVAM_LLM_MODEL", "sarvam-30b")
+            llm_max_tokens = 1600
+        else:
+            llm_client = AsyncGroq(api_key=groq_key, max_retries=0)
+            model_name = "llama-3.3-70b-versatile"
+            llm_max_tokens = 400
         FALLBACK_MODEL = "llama-3.1-8b-instant"
         
         lang_name = LANG_MAP.get(current_lang, "English")
@@ -249,116 +394,29 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
                 "- Oh gotcha! And roughly how many calls do you get in a day?\n"
                 "- Got it — so after-hours calls just go unanswered? Our AI agent attends every single call, 24/7.\n"
             ),
+            "Telugu": (
+                "Daffy's natural spoken Telugu style (Telugu script + everyday English words, exactly how people talk):\n"
+                "- సరే sir! మీ business కి daily ఎన్ని calls వస్తాయి?\n"
+                "- ఓ అలాగా! Night లో వచ్చే calls అన్నీ miss అవుతున్నాయా? మా AI agent 24/7 అన్ని calls attend చేస్తుంది.\n"
+            ),
+            "Kannada": (
+                "Daffy's natural spoken Kannada style (Kannada script + everyday English words, exactly how people talk):\n"
+                "- ಸರಿ sir! ನಿಮ್ಮ business ಗೆ daily ಎಷ್ಟು calls ಬರುತ್ತವೆ?\n"
+                "- ಓ ಹೌದಾ! Night ಲಿ ಬರುವ calls ಎಲ್ಲಾ miss ಆಗ್ತಿವೆಯಾ? ನಮ್ಮ AI agent 24/7 ಎಲ್ಲಾ calls attend ಮಾಡುತ್ತೆ.\n"
+            ),
+            "Malayalam": (
+                "Daffy's natural spoken Malayalam style (Malayalam script + everyday English words, exactly how people talk):\n"
+                "- ശരി sir! നിങ്ങളുടെ business ൽ daily എത്ര calls വരും?\n"
+                "- ഓ അങ്ങനെയാണോ! Night ൽ വരുന്ന calls എല്ലാം miss ആകുന്നുണ്ടോ? ഞങ്ങളുടെ AI agent 24/7 എല്ലാ calls ഉം attend ചെയ്യും.\n"
+            ),
         }
         
         few_shot = FEW_SHOT.get(lang_name, FEW_SHOT["English"])
         
         call_mode = session_state.get("call_mode", "outbound")
         
-        if call_mode == "outbound":
-            system_prompt_text = (
-                f"You are Daffy, a friendly salesperson from Daffytel Technologies, calling business owners to introduce"
-                f" Daffytel's AI CALLING AGENT — an AI that attends incoming calls and makes outgoing calls for a business"
-                f" 24/7, in Tamil, English, Hindi and more, books appointments, answers customer questions and captures leads."
-                f" You sound completely human — warm, confident, natural.\n\n"
-                f"PRODUCT KNOWLEDGE (know it like a real rep):\n"
-                f"- AI Calling Agent attends every call day and night — no missed calls, no extra staff cost\n"
-                f"- Speaks naturally in Tamil, English, Hindi and other Indian languages\n"
-                f"- Books appointments/demos, answers FAQs, qualifies leads, shares details on WhatsApp\n"
-                f"- Works for any business that gets calls: clinics, shops, real estate, service centres, agencies\n"
-                f"- Pricing: depends on call volume and requirements — exact quote is given in the demo\n\n"
-                f"ANSWERING CUSTOMER QUESTIONS (like a real human, never robotic):\n"
-                f"- 'How does it work?' → 'We connect it to your business number — it attends calls and talks to customers naturally, just like a person.'\n"
-                f"- 'Price?' → 'It depends on your call volume — our team will give you an exact quote in the demo.'\n"
-                f"- 'Will customers know it's a machine?' → 'It talks so naturally most people can't tell — you can test it yourself in the demo!'\n"
-                f"- 'Tamil support?' → 'Yes! Tamil, English, Hindi — it talks to your customers in their own language.'\n"
-                f"- 'Are YOU an AI?' (only if directly asked) → proudly confirm: 'Yes! You're talking to our AI agent right now — this call itself is the live demo!'\n"
-                f"- Any question you can't answer → 'Good question! Our team will cover that in the demo.'\n\n"
-                f"CALL SCRIPT (follow this order, ONE step per turn, react before asking):\n"
-                f"1. Confirm you have the right person, ask for 2 minutes\n"
-                f"2. HOOK: ask how they handle customer calls today — do calls get missed after hours or when staff are busy?\n"
-                f"3. DISCOVER: business type → daily call volume → who attends the calls → biggest pain\n"
-                f"4. PITCH: connect THEIR pain to the AI calling agent in ONE line\n"
-                f"5. QUALIFY: if interested, collect their name, business name and mobile number, one at a time\n"
-                f"6. CLOSE: offer a FREE live demo, ask preferred day/time, confirm it back\n"
-                f"7. END: thank warmly and close the call\n\n"
-                f"OBJECTIONS (handle naturally):\n"
-                f"- 'Already have staff for calls' → 'That's great! And after they leave in the evening, who picks up? That's exactly where our AI helps.'\n"
-                f"- 'Send on WhatsApp' → 'Sure! Can I grab your number? Our team will send the details.'\n"
-                f"- 'Not interested' → one gentle follow-up: 'No problem! Just curious — do you ever miss customer calls when you're busy?' If still no, close graciously.\n\n"
-                f"ENDING THE CALL (every call MUST reach a clear ending):\n"
-                f"- If demo confirmed: repeat the day/time back, thank warmly, close\n"
-                f"- If not interested / busy / says bye: ONE short warm goodbye, close\n"
-                f"- NEVER keep asking new questions after the goal (demo booked OR clearly declined) is reached\n\n"
-                f"CONTROL MARKERS (silent — never speak, spell or translate them; place at the very END of the reply):\n"
-                f"- [END_CALL] → append ONLY in your final goodbye reply. NEVER in a reply that asks the customer a question.\n"
-                f"- [MEETING_BOOKED: Wednesday 4 PM] → ONLY after the customer states a SPECIFIC day/time; write their ACTUAL day/time. NEVER write placeholders.\n"
-                f"- [LEAD: status=HOT | name=Ravi | business=textile shop | phone=98xxxxxxxx | need=missed evening calls] → append in the SAME final reply as [END_CALL], on EVERY call.\n"
-                f"  status=HOT (demo booked / very interested), WARM (interested, no demo yet / callback), COLD (not interested).\n"
-                f"  Fill ONLY details the customer actually said; omit unknown fields. Minimum: [LEAD: status=COLD]\n"
-                f"  Example final reply: 'சரிங்க, Wednesday 4 PM க்கு demo fix! ரொம்ப நன்றி, வணக்கம்! [MEETING_BOOKED: Wednesday 4 PM] [LEAD: status=HOT | name=Ravi | business=clinic] [END_CALL]'\n\n"
-                f"RULES:\n"
-                f"- MAX 1-2 SHORT sentences per reply\n"
-                f"- NEVER repeat a question you already asked; NEVER re-introduce yourself after the first turn\n"
-                f"- Never volunteer that you're an AI (only confirm if directly asked, as above)\n"
-                f"- No politics, no religion, no false claims\n\n"
-                f"{few_shot}\n"
-                f"CRITICAL LANGUAGE RULE: Reply ONLY in {lang_name}."
-                f" If Tamil: speak natural everyday TANGLISH exactly how people talk — Tamil script for Tamil words, and keep common English words in English letters"
-                f" (business, calls, demo, AI, miss, staff, time, free, book). Example: 'உங்க business ல daily எவ்வளோ calls வரும்?'"
-                f" NEVER use formal/literary Tamil words like 'வணிகம்', 'அழைப்புகள்', 'மென்பொருள்' — say 'business', 'calls', 'software'. MAX 1-2 short sentences."
-            )
-        else:  # inbound
-            system_prompt_text = (
-                f"You are Daffy, a friendly sales consultant at Daffytel Technologies answering an inbound call."
-                f" You sound completely human — warm, attentive, natural."
-                f" Daffytel's main product is the AI CALLING AGENT — an AI that attends incoming calls and makes outgoing calls"
-                f" for a business 24/7, in Tamil, English, Hindi and more, books appointments, answers customer questions and captures leads.\n\n"
-                f"PRODUCT KNOWLEDGE (know it like a real rep):\n"
-                f"- AI Calling Agent attends every call day and night — no missed calls, no extra staff cost\n"
-                f"- Speaks naturally in Tamil, English, Hindi and other Indian languages\n"
-                f"- Books appointments/demos, answers FAQs, qualifies leads, shares details on WhatsApp\n"
-                f"- Works for any business that gets calls: clinics, shops, real estate, service centres, agencies\n"
-                f"- Pricing: depends on call volume and requirements — exact quote is given in the demo\n\n"
-                f"ANSWERING QUESTIONS (like a real human, never robotic):\n"
-                f"- 'How does it work?' → 'We connect it to your business number — it attends calls and talks to customers naturally, just like a person.'\n"
-                f"- 'Price?' → 'It depends on your call volume — our team will give you an exact quote in the demo.'\n"
-                f"- 'Will customers know it's a machine?' → 'It talks so naturally most people can't tell — you can test it in the demo!'\n"
-                f"- 'Are YOU an AI?' (only if directly asked) → proudly confirm: 'Yes! You're talking to our AI agent right now — this call itself is the live demo!'\n"
-                f"- Any question you can't answer → 'Good question! Our team will cover that in the demo.'\n\n"
-                f"CALL FLOW (ONE step per turn):\n"
-                f"1. Greet warmly, ask how you can help\n"
-                f"2. Listen, understand their need, ask short clarifying questions\n"
-                f"3. Learn: business type, call volume, biggest pain with handling calls\n"
-                f"4. Explain how the AI calling agent solves THEIR specific problem, in ONE line\n"
-                f"5. Collect lead info one at a time: name, business name, mobile number\n"
-                f"6. Offer a FREE live demo — ask preferred day/time, confirm it back\n"
-                f"7. Thank warmly and close the call\n\n"
-                f"OBJECTIONS:\n"
-                f"- 'Just exploring' → 'Perfect timing! What made you curious about this?'\n"
-                f"- 'Too expensive' → 'Totally get that — we have packages for all sizes, let me understand your setup first.'\n"
-                f"- 'Want to talk to a person' → 'Of course! Can I grab your number? One of our consultants will reach out.'\n\n"
-                f"ENDING THE CALL (every call MUST reach a clear ending):\n"
-                f"- If demo confirmed: repeat the day/time back, thank warmly, close\n"
-                f"- If their query is answered and nothing else is needed, or they say bye: ONE short warm goodbye, close\n"
-                f"- NEVER keep asking new questions once their need is handled\n\n"
-                f"CONTROL MARKERS (silent — never speak, spell or translate them; place at the very END of the reply):\n"
-                f"- [END_CALL] → append ONLY in your final goodbye reply. NEVER in a reply that asks the caller a question.\n"
-                f"- [MEETING_BOOKED: Wednesday 4 PM] → ONLY after the caller states a SPECIFIC day/time; write their ACTUAL day/time. NEVER write placeholders.\n"
-                f"- [LEAD: status=HOT | name=Ravi | business=textile shop | phone=98xxxxxxxx | need=missed evening calls] → append in the SAME final reply as [END_CALL], on EVERY call.\n"
-                f"  status=HOT (demo booked / very interested), WARM (interested, no demo yet / callback), COLD (not interested / wrong number).\n"
-                f"  Fill ONLY details the caller actually said; omit unknown fields. Minimum: [LEAD: status=COLD]\n\n"
-                f"RULES:\n"
-                f"- MAX 1-2 SHORT sentences per reply\n"
-                f"- NEVER repeat a question you already asked\n"
-                f"- Never volunteer that you're an AI (only confirm if directly asked, as above)\n"
-                f"- No politics, no religion\n\n"
-                f"{few_shot}\n"
-                f"CRITICAL LANGUAGE RULE: Reply ONLY in {lang_name}."
-                f" If Tamil: speak natural everyday TANGLISH exactly how people talk — Tamil script for Tamil words, and keep common English words in English letters"
-                f" (business, calls, demo, AI, miss, staff, time, free, book). Example: 'உங்க business ல daily எவ்வளோ calls வரும்?'"
-                f" NEVER use formal/literary Tamil words like 'வணிகம்', 'அழைப்புகள்', 'மென்பொருள்' — say 'business', 'calls', 'software'. MAX 1-2 short sentences."
-            )
+        # System prompt lives in Scripts/outbound_prompt.txt / Scripts/inbound_prompt.txt
+        system_prompt_text = load_script_prompt(call_mode, lang_name, few_shot)
         
         logger.info(f'[LLM PROMPT] lang={current_lang} | model={model_name}')
             
@@ -370,9 +428,11 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
             
         history.append({"role": "user", "content": transcript})
         
-        # Cap history to last 10 turns (plus system prompt) to avoid token bloat
-        if len(history) > 11:
-            history = [history[0]] + history[-10:]
+        # Cap history to last 6 turns (plus system prompt). Keeping this small matters:
+        # Groq free tier allows only 6000 tokens/min on the 70B model, and every extra
+        # turn of history pushes each request closer to that ceiling (429 → fallback).
+        if len(history) > 7:
+            history = [history[0]] + history[-6:]
             
         session_state["history"] = history
         
@@ -382,20 +442,36 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
                 model=model_name,
                 messages=history,
                 temperature=0.75,
-                max_tokens=220,
+                max_tokens=llm_max_tokens,
                 stream=True
             )
         except Exception as llm_err:
             err_str = str(llm_err)
-            logger.warning(f"[LLM] Primary model '{model_name}' error: {err_str}. Retrying with {FALLBACK_MODEL} on Groq...")
-            groq_client2 = AsyncGroq(api_key=groq_key, max_retries=0)
-            llm_res = await groq_client2.chat.completions.create(
-                model=FALLBACK_MODEL,
-                messages=history,
-                temperature=0.7,
-                max_tokens=200,
-                stream=True
-            )
+            # Prefer Sarvam as fallback: slower (reasoning model) but coherent and
+            # follows the script. Groq's 8b-instant produces garbage Tamil and
+            # hallucinates markers — keep it only as the last resort.
+            if sarvam_key and llm_provider != "sarvam":
+                model_name = os.getenv("SARVAM_LLM_MODEL", "sarvam-30b")
+                logger.warning(f"[LLM] Primary model error: {err_str}. Falling back to Sarvam {model_name}...")
+                sarvam_client = AsyncOpenAI(base_url=SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
+                llm_res = await sarvam_client.chat.completions.create(
+                    model=model_name,
+                    messages=history,
+                    temperature=0.7,
+                    max_tokens=1600,
+                    stream=True
+                )
+            else:
+                logger.warning(f"[LLM] Primary model '{model_name}' error: {err_str}. Retrying with {FALLBACK_MODEL} on Groq...")
+                groq_client2 = AsyncGroq(api_key=groq_key, max_retries=0)
+                llm_res = await groq_client2.chat.completions.create(
+                    model=FALLBACK_MODEL,
+                    messages=history,
+                    temperature=0.7,
+                    max_tokens=400,
+                    stream=True
+                )
+                model_name = FALLBACK_MODEL  # so the transcript log shows the model that actually replied
         
         # 3. Streaming and sentence splitting
         sentences = []
@@ -481,6 +557,7 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
         llm_latency = int((t_llm_first - t_asr)*1000) if t_llm_first else int((t_llm_done - t_asr)*1000)
         logger.info(f"[LATENCY] ASR: {int((t_asr - t_start)*1000)}ms | LLM first chunk: {llm_latency}ms")
         convo_logger.info(f"{AGENT_NAME.upper()} ({current_lang}) [model={model_name}, latency={llm_latency}ms]: {full_reply}")
+        add_transcript(session_state, "agent", full_reply, current_lang)
 
         # LLM signalled the conversation is over — hang up gracefully.
         # Guard: if the reply still asks the customer a question, the LLM fired
@@ -512,11 +589,13 @@ async def speak_fallback(websocket: WebSocket, session_state: dict):
     
     text = FALLBACK_MSGS.get(current_lang, FALLBACK_MSGS["en-IN"])
     convo_logger.info(f"{AGENT_NAME.upper()} ({current_lang}) [fallback]: {text}")
+    add_transcript(session_state, "agent", text, current_lang)
     await dispatch_tts(text, current_lang, session_state, websocket)
 
 # Control markers the LLM appends to signal call state (never spoken aloud)
 ENDCALL_RE = re.compile(r'\[?END[_ ]?CALL\]?')
 MEETING_RE = re.compile(r'\[MEETING[_ ]?BOOKED\s*:?\s*([^\]]*)\]')
+CALLBACK_RE = re.compile(r'\[CALLBACK\s*:?\s*([^\]]*)\]')
 LEAD_RE = re.compile(r'\[LEAD\s*:?\s*([^\]]*)\]')
 
 IDLE_NUDGE_MSGS = {
@@ -550,19 +629,58 @@ def log_meeting(details: str, session_state: dict):
     if session_state.get("meeting_logged"):
         return
     session_state["meeting_logged"] = True
+    session_state["meeting_details"] = details
     lang = session_state.get("language_code", "en-IN")
+    mode = session_state.get("call_mode", "outbound")
     convo_logger.info(f"===== MEETING BOOKED ({lang}): {details} =====")
-    try:
-        meetings_path = os.path.join(os.path.dirname(__file__), "meetings.log")
-        with open(meetings_path, "a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} | lang={lang} | {details}\n")
-    except Exception as e:
-        logger.error(f"[MEETING] Failed to write meetings.log: {e}")
+    record = {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "call_id": session_state.get("call_id", ""),
+        "direction": "incoming" if mode == "inbound" else "outgoing",
+        "phone": session_state.get("phone", ""),
+        "language": lang,
+        "details": details,
+    }
+    if not db.db_save_meeting(record):
+        # PostgreSQL unavailable — fall back to the JSONL file
+        try:
+            os.makedirs(os.path.dirname(MEETINGS_LOG_PATH), exist_ok=True)
+            with open(MEETINGS_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error(f"[MEETING] Failed to write meetings.jsonl: {e}")
+
+def log_callback(details: str, session_state: dict):
+    if session_state.get("callback_logged") or not details:
+        return
+    session_state["callback_logged"] = True
+    session_state["callback_details"] = details
+    lang = session_state.get("language_code", "en-IN")
+    mode = session_state.get("call_mode", "outbound")
+    convo_logger.info(f"===== CALLBACK REQUESTED ({lang}): {details} =====")
+    record = {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "call_id": session_state.get("call_id", ""),
+        "direction": "incoming" if mode == "inbound" else "outgoing",
+        "phone": session_state.get("phone", ""),
+        "language": lang,
+        "callback_time": details,
+    }
+    if not db.db_save_callback(record):
+        try:
+            path = os.path.join(os.path.dirname(__file__), "logs", "callbacks.jsonl")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error(f"[CALLBACK] Failed to write callbacks.jsonl: {e}")
+
 
 def log_lead(details: str, session_state: dict):
     if session_state.get("lead_logged") or not details:
         return
     session_state["lead_logged"] = True
+    session_state["lead_details"] = details
     lang = session_state.get("language_code", "en-IN")
     mode = session_state.get("call_mode", "outbound")
     convo_logger.info(f"===== LEAD ({mode}, {lang}): {details} =====")
@@ -583,6 +701,12 @@ def extract_control_markers(text: str, session_state: dict) -> str:
         if details and '<' not in details and 'day and time' not in details.lower():
             log_meeting(details, session_state)
         text = MEETING_RE.sub('', text)
+    cb = CALLBACK_RE.search(text)
+    if cb:
+        cb_details = cb.group(1).strip()
+        if cb_details and '<' not in cb_details:
+            log_callback(cb_details, session_state)
+        text = CALLBACK_RE.sub('', text)
     lm = LEAD_RE.search(text)
     if lm:
         log_lead(lm.group(1).strip(), session_state)
@@ -604,6 +728,7 @@ async def finalize_call(websocket: WebSocket, session_state: dict, goodbye_text:
     if goodbye_text:
         lang = session_state.get("language_code", "en-IN")
         convo_logger.info(f"{AGENT_NAME.upper()} ({lang}) [closing]: {goodbye_text}")
+        add_transcript(session_state, "agent", goodbye_text, lang)
         await dispatch_tts(goodbye_text, lang, session_state, websocket)
     try:
         await asyncio.wait_for(session_state["tts_queue"].join(), timeout=20)
@@ -651,7 +776,7 @@ async def azure_tts_fetch(text: str, lang: str) -> bytes:
         "Ocp-Apim-Subscription-Key": azure_key,
         "Content-Type": "application/ssml+xml",
         "X-Microsoft-OutputFormat": "riff-16khz-16bit-mono-pcm",
-        "User-Agent": "InfiniteTechAI"
+        "User-Agent": "DaffytelAI"
     }
     
     try:
@@ -670,10 +795,57 @@ async def azure_tts_fetch(text: str, lang: str) -> bytes:
         return b""
 
 
+async def sarvam_tts_fetch(text: str, lang: str) -> bytes:
+    """Fetch audio from Sarvam Bulbul TTS — Indic-specialised, handles Tanglish
+    (Tamil script mixed with English words) naturally."""
+    sarvam_key = os.getenv("SARVAM_API_KEY")
+    if not sarvam_key:
+        return b""
+
+    SUPPORTED = {"en-IN", "ta-IN", "hi-IN", "te-IN", "kn-IN", "ml-IN"}
+    payload = {
+        "text": text,
+        "target_language_code": lang if lang in SUPPORTED else "en-IN",
+        "speaker": os.getenv("SARVAM_TTS_SPEAKER", "anushka"),
+        "model": "bulbul:v2",
+        "speech_sample_rate": 16000,
+        "enable_preprocessing": True,
+    }
+    headers = {"api-subscription-key": sarvam_key, "Content-Type": "application/json"}
+
+    try:
+        t0 = time.time()
+        async with httpx.AsyncClient() as client:
+            res = await client.post(SARVAM_TTS_URL, json=payload, headers=headers, timeout=15.0)
+            if res.status_code != 200:
+                logger.error(f"[SARVAM TTS] Error {res.status_code}: {res.text[:200]}")
+                return b""
+            audios = res.json().get("audios") or []
+            if not audios:
+                logger.error("[SARVAM TTS] Empty audios in response.")
+                return b""
+            audio_bytes = strip_wav_header(base64.b64decode(audios[0]))
+            logger.info(f"[SARVAM TTS] Fetched '{text[:40]}' via bulbul:v2 in {int((time.time()-t0)*1000)}ms. Raw: {len(audio_bytes)} bytes.")
+            return audio_bytes
+    except Exception as e:
+        logger.error(f"[SARVAM TTS] Exception: {e}")
+        return b""
+
+
+async def tts_fetch(text: str, lang: str) -> bytes:
+    """Primary: Sarvam Bulbul (when SARVAM_API_KEY is set). Fallback: Azure Neural."""
+    audio = await sarvam_tts_fetch(text, lang)
+    if audio:
+        return audio
+    if os.getenv("SARVAM_API_KEY"):
+        logger.warning("[TTS] Sarvam failed — falling back to Azure.")
+    return await azure_tts_fetch(text, lang)
+
+
 async def dispatch_tts(text: str, lang: str, session_state: dict, websocket: WebSocket):
     # Queue up a task with its creation time to handle async barge-ins
     task_time = time.time()
-    task = asyncio.create_task(azure_tts_fetch(text, lang))
+    task = asyncio.create_task(tts_fetch(text, lang))
     await session_state["tts_queue"].put((task_time, task))
 
 async def tts_playback_worker(session_state: dict, websocket: WebSocket):
@@ -707,8 +879,13 @@ async def tts_playback_worker(session_state: dict, websocket: WebSocket):
                 
                 now = time.time()
                 current_end = session_state.get("playback_end_time", 0)
-                session_state["playback_end_time"] = max(now, current_end) + duration_sec
-                
+                playback_start = max(now, current_end)
+                session_state["playback_end_time"] = playback_start + duration_sec
+
+                recorder = session_state.get("recorder")
+                if recorder:
+                    recorder.add_agent(audio_bytes, playback_start)
+
             queue.task_done()
         except asyncio.CancelledError:
             break
@@ -718,8 +895,8 @@ async def tts_playback_worker(session_state: dict, websocket: WebSocket):
 async def play_greeting(websocket: WebSocket, session_state: dict):
     call_mode = session_state.get("call_mode", "outbound")
     if call_mode == "outbound":
-        # Outbound: Daffy is calling the customer — introduce and ask if they have a moment
-        text = "Hello! Am I speaking with the business owner? I'm Daffy from Daffytel Technologies — I'm calling about our AI calling agent that attends your business calls 24/7, so you never miss a customer. Do you have just 2 minutes?"
+        # Outbound: introduce FIRST, then ask who we're speaking with
+        text = "Hello! I'm Daffy, calling from Daffytel Technologies. We help businesses attend every customer call 24/7 with our AI calling agent. May I know who I'm speaking with?"
     else:
         # Inbound: Customer called in — welcome them
         text = "Hello! Thanks for calling Daffytel Technologies, I'm Daffy. How can I help you today?"
@@ -731,6 +908,7 @@ async def play_greeting(websocket: WebSocket, session_state: dict):
     session_state["history"] = [{"role": "assistant", "content": text}]
 
     convo_logger.info(f"{AGENT_NAME.upper()} ({lang}) [greeting, mode={call_mode}]: {text}")
+    add_transcript(session_state, "agent", text, lang)
     await dispatch_tts(text, lang, session_state, websocket)
 
 @router.websocket("/api/voice/teleforce_stream")
@@ -750,6 +928,7 @@ async def teleforce_websocket_endpoint(websocket: WebSocket):
         "idle_nudges": 0,
         "pending_end_call": False,
         "ending": False,
+        "transcript": [],
     }
     
     playback_task = asyncio.create_task(tts_playback_worker(session_state, websocket))
@@ -773,18 +952,27 @@ async def teleforce_websocket_endpoint(websocket: WebSocket):
             if event == "start":
                 mode = msg.get("callMode") or msg.get("mode") or "outbound"
                 session_state["call_mode"] = mode
+                session_state["phone"] = (msg.get("phone") or "").strip()
                 session_state["call_start"] = time.time()
                 session_state["last_activity"] = time.time()
-                logger.info(f"[TELEFORCE WSS] Received 'start' (mode={mode}). Playing greeting...")
+                call_id = time.strftime("%Y%m%d_%H%M%S") + ("_incoming" if mode == "inbound" else "_outgoing")
+                session_state["call_id"] = call_id
+                session_state["recorder"] = CallRecorder(call_id)
+                logger.info(f"[TELEFORCE WSS] Received 'start' (mode={mode}, id={call_id}). Playing greeting...")
                 await play_greeting(websocket, session_state)
 
             elif event == "media":
-                # Call is being wrapped up — ignore incoming audio
+                audio_b64 = msg["media"]["payload"]
+                pcm_bytes = base64.b64decode(audio_b64)
+
+                recorder = session_state.get("recorder")
+                if recorder:
+                    recorder.add_caller(pcm_bytes)
+
+                # Call is being wrapped up — record but don't process further
                 if session_state.get("ending"):
                     continue
 
-                audio_b64 = msg["media"]["payload"]
-                pcm_bytes = base64.b64decode(audio_b64)
                 rms = audioop.rms(pcm_bytes, 2)
 
                 now = time.time()
@@ -850,6 +1038,13 @@ async def teleforce_websocket_endpoint(websocket: WebSocket):
                             if len(audio_buffer) >= MIN_SPEECH_BYTES:
                                 utterance = bytes(audio_buffer)
                                 session_state["barge_in"] = False
+                                # A newer utterance supersedes a reply still being
+                                # generated — otherwise rapid utterances spawn
+                                # parallel replies that speak over each other.
+                                if pipeline_task and not pipeline_task.done():
+                                    logger.info("[VAD] New utterance while previous reply in flight — superseding it.")
+                                    pipeline_task.cancel()
+                                    session_state["cancel_tts_before"] = time.time()
                                 pipeline_task = asyncio.create_task(process_utterance(utterance, session_state, websocket))
                             else:
                                 logger.info(f"[VAD] Utterance too short, discarding.")
@@ -872,6 +1067,7 @@ async def teleforce_websocket_endpoint(websocket: WebSocket):
                                     nudge = IDLE_NUDGE_MSGS.get(lang, IDLE_NUDGE_MSGS["en-IN"])
                                     logger.info(f"[CALL FLOW] Caller silent for {IDLE_TIMEOUT_SECS}s — nudging.")
                                     convo_logger.info(f"{AGENT_NAME.upper()} ({lang}) [silence nudge]: {nudge}")
+                                    add_transcript(session_state, "agent", nudge, lang)
                                     await dispatch_tts(nudge, lang, session_state, websocket)
                                 else:
                                     goodbye = IDLE_GOODBYE_MSGS.get(lang, IDLE_GOODBYE_MSGS["en-IN"])
@@ -892,6 +1088,39 @@ async def teleforce_websocket_endpoint(websocket: WebSocket):
         # emitted a [LEAD: ...] marker (silent caller, dropped call), record that too.
         if not session_state.get("lead_logged"):
             log_lead("status=INCOMPLETE | call ended without lead capture", session_state)
+
+        # Save the call recording and append the call-history record
+        recording_file = None
+        recorder = session_state.get("recorder")
+        if recorder:
+            recording_file = recorder.save()
+        if session_state.get("call_id"):
+            try:
+                end_time = time.time()
+                start_time = session_state.get("call_start", end_time)
+                record = {
+                    "id": session_state["call_id"],
+                    "direction": "incoming" if session_state.get("call_mode") == "inbound" else "outgoing",
+                    "phone": session_state.get("phone", ""),
+                    "start": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
+                    "end": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)),
+                    "duration_sec": int(end_time - start_time),
+                    "language": session_state.get("language_code", "en-IN"),
+                    "lead": session_state.get("lead_details", ""),
+                    "meeting": session_state.get("meeting_details", ""),
+                    "callback": session_state.get("callback_details", ""),
+                    "ended_by": "agent" if session_state.get("ending") else "caller",
+                    "recording": recording_file,
+                    "transcript": session_state.get("transcript", []),
+                }
+                if not db.db_save_call(record):
+                    # PostgreSQL unavailable — fall back to the JSONL file
+                    os.makedirs(os.path.dirname(CALLS_LOG_PATH), exist_ok=True)
+                    with open(CALLS_LOG_PATH, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.error(f"[CALL HISTORY] Failed to save call record: {e}")
+
         convo_logger.info("===== CALL ENDED =====")
         if playback_task:
             playback_task.cancel()

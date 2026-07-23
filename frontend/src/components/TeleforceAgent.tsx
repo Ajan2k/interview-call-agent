@@ -255,8 +255,14 @@ const userAgentRef = useRef<UserAgent | null>(null);
       addLog('Python WebSocket Connected!');
       const isOutbound = currentSession instanceof Inviter;
       const mode = isOutbound ? 'outbound' : 'inbound';
-      addLog(`Initiating AI Session (Mode: ${mode})`);
-      ws.send(JSON.stringify({ event: 'start', callMode: mode }));
+      // The other party's number: caller ID for inbound, dialed number for outbound
+      let phone = '';
+      try {
+        const remote = (currentSession as any).remoteIdentity;
+        phone = remote?.uri?.user || remote?.displayName || '';
+      } catch (e) {}
+      addLog(`Initiating AI Session (Mode: ${mode}, Phone: ${phone || 'unknown'})`);
+      ws.send(JSON.stringify({ event: 'start', callMode: mode, phone }));
     };
 
     ws.onerror = () => {

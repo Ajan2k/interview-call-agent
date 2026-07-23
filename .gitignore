@@ -1,36 +1,58 @@
-# Dependencies
-node_modules/
+# ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
-
-# Environment variables
-.env
-.env.local
-.env.production
-
-# Recordings / call audio
-calls/
-recordings/
-
-# Build output
-dist/
-build/
-.next/
+*.pyd
 
 # Python virtual environment
 venv/
 env/
 .venv/
 
-# Logs
-*.log
+# ─── Node / Frontend ──────────────────────────────────────────────────────────
+node_modules/
 npm-debug.log*
+yarn-error.log
 
-# OS files
+# Build output
+dist/
+build/
+.next/
+
+# ─── Environment variables (NEVER commit real keys) ───────────────────────────
+.env
+.env.local
+.env.production
+.env.development
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+backend/logs/
+
+# ─── Call data / Recordings ───────────────────────────────────────────────────
+calls/
+recordings/
+backend/recordings/
+
+# ─── Runtime data files ───────────────────────────────────────────────────────
+leads.log
+meetings.log
+backend/leads.log
+backend/meetings.log
+
+# ─── Archives ─────────────────────────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.rar
+
+# ─── OS files ─────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# IDE
+# ─── IDE ──────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo

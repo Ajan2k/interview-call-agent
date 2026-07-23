@@ -2,10 +2,35 @@ import logging
 import logging.handlers
 import os
 
+from dotenv import load_dotenv
+
+# setup_logging() runs before main.py calls load_dotenv(), so load .env here to
+# make flags like LOG_API_POLLING visible at logging-setup time.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "app.log")
 _ERROR_LOG_FILE = os.path.join(_LOG_DIR, "errors.log")
 _CONVERSATION_LOG_FILE = os.path.join(_LOG_DIR, "conversation.log")
+
+# The dashboard polls these every few seconds — their successful requests drown out
+# everything useful in the console and app.log. Hidden by default; set
+# LOG_API_POLLING=true in .env to see them again. Failures (non-200) always show.
+_POLL_ENDPOINTS = (
+    "/api/health", "/api/campaigns", "/api/logs", "/api/voice-config",
+    "/api/contacts", "/api/call-history", "/api/meetings", "/api/callbacks",
+)
+
+
+class _PollingNoiseFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        if " 200" not in msg:
+            return True  # never hide errors
+        return not any(ep in msg for ep in _POLL_ENDPOINTS)
 
 
 def setup_logging():
@@ -41,10 +66,28 @@ def setup_logging():
         logging.getLogger(name).handlers = []
 
     # uvicorn.access doesn't propagate to root, so it needs the file/error handlers directly.
-    logging.getLogger("uvicorn.access").addHandler(file_handler)
-    logging.getLogger("uvicorn.access").addHandler(error_handler)
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addHandler(file_handler)
+    access_logger.addHandler(error_handler)
+
+    apply_access_log_filter()
 
     return _LOG_FILE
+
+
+def apply_access_log_filter():
+    """(Re)attach the polling-noise filter to uvicorn's access logger AND all of
+    its handlers. Called again at app startup because uvicorn configures its own
+    logging around app import, which can leave handlers that bypass a filter
+    added earlier."""
+    if os.getenv("LOG_API_POLLING", "false").lower() in ("1", "true", "yes"):
+        return
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _PollingNoiseFilter) for f in access_logger.filters):
+        access_logger.addFilter(_PollingNoiseFilter())
+    for h in access_logger.handlers:
+        if not any(isinstance(f, _PollingNoiseFilter) for f in h.filters):
+            h.addFilter(_PollingNoiseFilter())
 
 
 def get_conversation_logger():

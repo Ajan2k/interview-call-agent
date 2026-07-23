@@ -136,6 +136,58 @@ def init_db():
                     prompt_template TEXT
                 );
             """)
+
+            # Calls Table — one row per completed AI call (the call history)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS calls (
+                    id VARCHAR(255) PRIMARY KEY,
+                    direction VARCHAR(20),
+                    phone VARCHAR(100),
+                    start_time TIMESTAMP,
+                    end_time TIMESTAMP,
+                    duration_sec INT DEFAULT 0,
+                    language VARCHAR(20),
+                    lead TEXT,
+                    lead_status VARCHAR(30),
+                    meeting TEXT,
+                    callback TEXT,
+                    ended_by VARCHAR(20),
+                    recording VARCHAR(255),
+                    transcript JSONB
+                );
+            """)
+            # Add columns to pre-existing calls tables (idempotent)
+            cur.execute("ALTER TABLE calls ADD COLUMN IF NOT EXISTS callback TEXT;")
+            cur.execute("ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript JSONB;")
+
+            # Meetings Table — demos booked by the agent
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS meetings (
+                    id SERIAL PRIMARY KEY,
+                    time TIMESTAMP,
+                    call_id VARCHAR(255),
+                    direction VARCHAR(20),
+                    phone VARCHAR(100),
+                    language VARCHAR(20),
+                    details TEXT
+                );
+            """)
+
+            # Callbacks Table — customers who asked to be called back later
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS callbacks (
+                    id SERIAL PRIMARY KEY,
+                    time TIMESTAMP,
+                    call_id VARCHAR(255),
+                    direction VARCHAR(20),
+                    phone VARCHAR(100),
+                    language VARCHAR(20),
+                    callback_time TEXT,
+                    done BOOLEAN DEFAULT FALSE
+                );
+            """)
+
+        _migrate_jsonl_history(conn)
         _db_initialized = True
         logger.info("[POSTGRES] Database tables initialized successfully!")
         conn.close()
@@ -145,6 +197,289 @@ def init_db():
         if conn:
             conn.close()
         return False
+
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_CALLS_JSONL = os.path.join(_BACKEND_DIR, "logs", "calls.jsonl")
+_MEETINGS_JSONL = os.path.join(_BACKEND_DIR, "logs", "meetings.jsonl")
+
+import re as _re
+
+
+def _lead_status(lead: str) -> str:
+    m = _re.search(r"status\s*=\s*([A-Za-z_]+)", lead or "")
+    return m.group(1).upper() if m else ""
+
+
+def _migrate_jsonl_history(conn):
+    """One-time import of the old calls.jsonl / meetings.jsonl history into
+    PostgreSQL so nothing recorded before the DB switch is lost."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM calls;")
+            if cur.fetchone()[0] == 0 and os.path.exists(_CALLS_JSONL):
+                n = 0
+                with open(_CALLS_JSONL, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            r = json.loads(line)
+                            cur.execute("""
+                                INSERT INTO calls (id, direction, phone, start_time, end_time,
+                                    duration_sec, language, lead, lead_status, meeting, ended_by, recording)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                ON CONFLICT (id) DO NOTHING;
+                            """, (r.get("id"), r.get("direction"), r.get("phone", ""), r.get("start"),
+                                  r.get("end"), r.get("duration_sec", 0), r.get("language"),
+                                  r.get("lead", ""), _lead_status(r.get("lead", "")),
+                                  r.get("meeting", ""), r.get("ended_by", ""), r.get("recording")))
+                            n += 1
+                        except Exception:
+                            pass
+                if n:
+                    logger.info(f"[POSTGRES] Migrated {n} calls from calls.jsonl into DB.")
+
+            cur.execute("SELECT COUNT(*) FROM meetings;")
+            if cur.fetchone()[0] == 0 and os.path.exists(_MEETINGS_JSONL):
+                n = 0
+                with open(_MEETINGS_JSONL, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            r = json.loads(line)
+                            cur.execute("""
+                                INSERT INTO meetings (time, call_id, direction, phone, language, details)
+                                VALUES (%s,%s,%s,%s,%s,%s);
+                            """, (r.get("time"), r.get("call_id", ""), r.get("direction", ""),
+                                  r.get("phone", ""), r.get("language", ""), r.get("details", "")))
+                            n += 1
+                        except Exception:
+                            pass
+                if n:
+                    logger.info(f"[POSTGRES] Migrated {n} meetings from meetings.jsonl into DB.")
+    except Exception as e:
+        logger.error(f"[POSTGRES] JSONL migration error: {e}")
+
+
+# CRUD Helpers for Calls (call history)
+def db_save_call(record: Dict[str, Any]) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO calls (id, direction, phone, start_time, end_time,
+                    duration_sec, language, lead, lead_status, meeting, callback, ended_by, recording, transcript)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (id) DO UPDATE SET
+                    end_time = EXCLUDED.end_time,
+                    duration_sec = EXCLUDED.duration_sec,
+                    lead = EXCLUDED.lead,
+                    lead_status = EXCLUDED.lead_status,
+                    meeting = EXCLUDED.meeting,
+                    callback = EXCLUDED.callback,
+                    recording = EXCLUDED.recording,
+                    transcript = EXCLUDED.transcript;
+            """, (record.get("id"), record.get("direction"), record.get("phone", ""),
+                  record.get("start"), record.get("end"), record.get("duration_sec", 0),
+                  record.get("language"), record.get("lead", ""), _lead_status(record.get("lead", "")),
+                  record.get("meeting", ""), record.get("callback", ""),
+                  record.get("ended_by", ""), record.get("recording"),
+                  json.dumps(record.get("transcript", []), ensure_ascii=False)))
+        return True
+    except Exception as e:
+        logger.error(f"db_save_call error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def db_get_calls(date_from: str = "", date_to: str = "", direction: str = "",
+                 lead_status: str = "", language: str = "", limit: int = 500) -> Optional[List[Dict[str, Any]]]:
+    """Returns None when the DB is unavailable (caller falls back to JSONL)."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        where, params = [], []
+        if date_from:
+            where.append("start_time >= %s"); params.append(date_from)
+        if date_to:
+            where.append("start_time <= %s"); params.append(date_to + " 23:59:59")
+        if direction:
+            where.append("direction = %s"); params.append(direction)
+        if lead_status:
+            where.append("lead_status = %s"); params.append(lead_status.upper())
+        if language:
+            where.append("language = %s"); params.append(language)
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                SELECT id, direction, phone,
+                       to_char(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
+                       to_char(end_time, 'YYYY-MM-DD HH24:MI:SS') AS "end",
+                       duration_sec, language, lead, lead_status, meeting, callback, ended_by, recording
+                FROM calls {where_sql}
+                ORDER BY start_time DESC
+                LIMIT %s;
+            """, params + [limit])
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"db_get_calls error: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def db_get_call_transcript(call_id: str) -> Optional[Dict[str, Any]]:
+    """Return {found, transcript, phone, direction, start} for one call, or None if DB is down."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT phone, direction,
+                       to_char(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
+                       transcript
+                FROM calls WHERE id = %s;
+            """, (call_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"found": False, "transcript": []}
+            return {
+                "found": True,
+                "phone": row.get("phone", ""),
+                "direction": row.get("direction", ""),
+                "start": row.get("start", ""),
+                "transcript": row.get("transcript") or [],
+            }
+    except Exception as e:
+        logger.error(f"db_get_call_transcript error: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+# CRUD Helpers for Meetings
+def db_save_meeting(record: Dict[str, Any]) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO meetings (time, call_id, direction, phone, language, details)
+                VALUES (%s,%s,%s,%s,%s,%s);
+            """, (record.get("time"), record.get("call_id", ""), record.get("direction", ""),
+                  record.get("phone", ""), record.get("language", ""), record.get("details", "")))
+        return True
+    except Exception as e:
+        logger.error(f"db_save_meeting error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def db_get_meetings(limit: int = 200) -> Optional[List[Dict[str, Any]]]:
+    """Returns None when the DB is unavailable (caller falls back to JSONL)."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT to_char(time, 'YYYY-MM-DD HH24:MI:SS') AS time,
+                       call_id, direction, phone, language, details
+                FROM meetings
+                ORDER BY time DESC
+                LIMIT %s;
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"db_get_meetings error: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+# CRUD Helpers for Callbacks
+def db_save_callback(record: Dict[str, Any]) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO callbacks (time, call_id, direction, phone, language, callback_time)
+                VALUES (%s,%s,%s,%s,%s,%s);
+            """, (record.get("time"), record.get("call_id", ""), record.get("direction", ""),
+                  record.get("phone", ""), record.get("language", ""), record.get("callback_time", "")))
+        return True
+    except Exception as e:
+        logger.error(f"db_save_callback error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def db_get_callbacks(limit: int = 200, include_done: bool = True) -> Optional[List[Dict[str, Any]]]:
+    """Returns None when the DB is unavailable (caller falls back to JSONL)."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        where = "" if include_done else "WHERE done = FALSE"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                SELECT id, to_char(time, 'YYYY-MM-DD HH24:MI:SS') AS time,
+                       call_id, direction, phone, language, callback_time, done
+                FROM callbacks
+                {where}
+                ORDER BY done ASC, time DESC
+                LIMIT %s;
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"db_get_callbacks error: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def db_mark_callback_done(callback_id: int, done: bool = True) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE callbacks SET done = %s WHERE id = %s;", (done, callback_id))
+        return True
+    except Exception as e:
+        logger.error(f"db_mark_callback_done error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def db_delete_callback(callback_id: int) -> bool:
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM callbacks WHERE id = %s;", (callback_id,))
+        return True
+    except Exception as e:
+        logger.error(f"db_delete_callback error: {e}")
+        return False
+    finally:
+        conn.close()
+
 
 # CRUD Helpers for Contacts
 def db_get_contacts() -> List[Dict[str, Any]]:

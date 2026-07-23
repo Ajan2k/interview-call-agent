@@ -6,9 +6,10 @@ import {
   Clock, Activity, Sparkle, PhoneIncoming, FileSpreadsheet, Upload
 } from "lucide-react";
 import { Metrics } from "./components/Metrics";
-import { LiveSimulator } from "./components/LiveSimulator";
 import { CallLogs } from "./components/CallLogs";
 import { ScheduleTracker } from "./components/ScheduleTracker";
+import { CallHistory } from "./components/CallHistory";
+import { Reports } from "./components/Reports";
 import { Contact, Campaign, CallLog } from "./types";
 import { TeleforceAgent } from "./components/TeleforceAgent";
 import { StratroomHeader, StratroomTable, StratroomThead, StratroomTh, StratroomTr, StratroomTd, StratroomActions, StratroomStatus } from "./components/sampleUI";
@@ -31,7 +32,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"contacts" | "campaigns">("contacts");
 
   // Sidebar navigation tabs based on the High Density design layout
-  const [sidebarTab, setSidebarTab] = useState<"dashboard" | "dialer" | "scheduler" | "live_monitor" | "logs" | "voice">("dashboard");
+  const [sidebarTab, setSidebarTab] = useState<"dashboard" | "dialer" | "scheduler" | "calls" | "reports" | "logs" | "voice">("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -207,21 +208,21 @@ YOUR PERSONALITY:
     }
   }, [contacts, activeContact, selectedCampaign]);
 
-  // Compute Metrics from Active Data
-  const totalCalls = contacts.length;
-  const dialedTodayCount = contacts.filter((c) => c.status === "Completed" || c.status === "Calling").length;
-  const activeCampaignsCount = campaigns.filter((c) => c.status === "Running").length;
 
-  // Calculate success rate based on 'Interested' outcomes vs completed calls
-  const completedCalls = contacts.filter((c) => c.status === "Completed");
-  const successfulCalls = completedCalls.filter((c) => c.outcome === "Interested" || c.outcome === "Scheduled Callback");
-  const successRate = completedCalls.length > 0
-    ? Math.round((successfulCalls.length / completedCalls.length) * 100)
-    : 0;
-
-  // Calculate average duration
-  const totalDuration = completedCalls.reduce((acc, c) => acc + (c.duration || 0), 0);
-  const avgDuration = completedCalls.length > 0 ? Math.round(totalDuration / completedCalls.length) : 0;
+  // Dial an arbitrary number (used by the Callback Scheduler's "Call Now").
+  // Creates a transient contact so TeleforceAgent's auto-dial picks it up.
+  const handleDialNumber = (phone: string, label: string) => {
+    if (activeContact) {
+      alert("A call is already active. Please end it before dialing a callback.");
+      return;
+    }
+    setActiveContact({
+      id: `callback-${Date.now()}`,
+      name: label || "Callback",
+      phone,
+      status: "Calling",
+    });
+  };
 
   // Handlers
   const handleDialContact = async (contact: Contact) => {
@@ -240,91 +241,6 @@ YOUR PERSONALITY:
       //   method: "POST"
       // });
     } catch (e) { console.error(e); }
-  };
-
-  const handleCallEnded = async (contactId: string, finalStatus: "Completed" | "Failed" | "Voicemail", log: CallLog) => {
-    if (activeContact?.isIncoming) {
-      // Incoming calls are now tracked dynamically from DB contacts
-    }
-
-    setContacts((prev) =>
-      prev.map((c) =>
-        c.id === contactId
-          ? {
-            ...c,
-            status: "Completed",
-            outcome: log.outcome,
-            duration: log.duration,
-            callTime: new Date().toISOString(),
-            notes: log.notes,
-          }
-          : c
-      )
-    );
-    setLogs((prev) => [log, ...prev]);
-    setActiveContact(null);
-
-    try {
-      await fetch("/api/logs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(log),
-      });
-
-      if (!contactId.startsWith("inbound-")) {
-        await fetch(`/api/contacts/${contactId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: "Completed",
-            outcome: log.outcome,
-            duration: log.duration,
-            callTime: new Date().toISOString(),
-            notes: log.notes,
-          }),
-        });
-      }
-
-      if (selectedCampaign) {
-        const completedContacts = selectedCampaign.completedContacts + 1;
-        const newSuccessRate = Math.min(100, Math.round(
-          ((selectedCampaign.completedContacts * selectedCampaign.successRate + (log.outcome === "Interested" ? 100 : 0)) /
-            completedContacts) * 10
-        ) / 10);
-
-        setCampaigns((prev) =>
-          prev.map((camp) =>
-            camp.id === selectedCampaign.id
-              ? { ...camp, completedContacts, successRate: newSuccessRate }
-              : camp
-          )
-        );
-
-        await fetch(`/api/campaigns/${selectedCampaign.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ completedContacts, successRate: newSuccessRate }),
-        });
-      }
-    } catch (e) { console.error(e); }
-  };
-
-  const handleSimulateInboundCall = () => {
-    if (activeContact) {
-      alert("A calling session is currently active! Please end the active call before simulating an inbound call.");
-      return;
-    }
-    const tamilNames = ["Karthikeyan (Chennai)", "Anandhi (Coimbatore)", "Saravanan (Madurai)", "Priya (Trichy)", "Dinesh Kumar (Salem)"];
-    const notesPool = ["Wants to inquire about product warranty replacement details.", "Interested in booking a service appointment tomorrow morning."];
-    const incomingContact: Contact = {
-      id: `inbound-${Date.now()}`,
-      name: tamilNames[Math.floor(Math.random() * tamilNames.length)],
-      phone: `+91 9${Math.floor(100000000 + Math.random() * 900000000)}`,
-      status: "Ringing",
-      isIncoming: true,
-      notes: notesPool[Math.floor(Math.random() * notesPool.length)],
-    };
-    setActiveContact(incomingContact);
   };
 
   const handleContactsUploaded = async (parsedContacts: ParsedContact[], campaignName: string) => {
@@ -381,25 +297,6 @@ YOUR PERSONALITY:
       console.error(e);
       alert("Error saving contacts: " + e.message);
     }
-  };
-
-  const handleSingleCallScheduled = async (name: string, phone: string, time: string, notes: string) => {
-    const newContact: Contact = {
-      id: `c-schedule-${Date.now()}`,
-      name,
-      phone,
-      status: "Scheduled",
-      scheduledTime: time,
-      notes: notes || "Manually scheduled calendar call.",
-    };
-    setContacts((prev) => [newContact, ...prev]);
-    try {
-      await fetch("/api/contacts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newContact),
-      });
-    } catch (e) { console.error(e); }
   };
 
   const handleAddContactSubmit = async (e: React.FormEvent) => {
@@ -504,8 +401,8 @@ YOUR PERSONALITY:
 
 
             <nav className="hidden xl:flex items-center gap-5">
-              {['dashboard', 'dialer', 'scheduler', 'live_monitor', 'logs'].map((tab) => {
-                const labels: any = { dashboard: 'Metrics', dialer: 'Queue', scheduler: 'Scheduler', live_monitor: 'Live', logs: 'Logs' };
+              {['dashboard', 'dialer', 'scheduler', 'calls', 'reports', 'logs'].map((tab) => {
+                const labels: any = { dashboard: 'Metrics', dialer: 'Queue', scheduler: 'Scheduler', calls: 'Calls', reports: 'Reports', logs: 'Logs' };
                 return (
                   <button
                     key={tab}
@@ -559,14 +456,7 @@ YOUR PERSONALITY:
           {sidebarTab === "dashboard" && (
             <div className="space-y-6 p-4 md:p-8">
               {/* Metrics Strip */}
-              <Metrics
-                totalCalls={totalCalls}
-                activeCampaigns={activeCampaignsCount}
-                successRate={successRate}
-                avgDuration={avgDuration}
-                dialedToday={dialedTodayCount}
-                incomingCallsCount={incomingCallsCount}
-              />
+              <Metrics />
 
             </div>
           )}
@@ -749,77 +639,17 @@ YOUR PERSONALITY:
           )}
 
           {sidebarTab === "scheduler" && (
-            <div className="w-full">
+            <div className="w-full p-4 md:p-8">
               <ScheduleTracker
-                contacts={contacts}
-                autodialerActive={autodialerActive}
-                onToggleAutodialer={() => setAutodialerActive(!autodialerActive)}
                 activeContact={activeContact}
-                onSingleCallScheduled={handleSingleCallScheduled}
+                onDialNumber={handleDialNumber}
               />
             </div>
           )}
 
-          {sidebarTab === "live_monitor" && (
-            <>
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-6 flex flex-col gap-4">
-                  {/* INBOUND AUTO-ATTENDER SIMULATOR CONTROLLER CARD */}
-                  <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-white/50 p-6 text-slate-800 shadow-xl flex flex-col gap-4 h-full">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-2.5 w-2.5 relative">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                        </span>
-                        <h4 className="font-extrabold text-[10px] text-emerald-600 uppercase tracking-wider">Inbound Auto-Attender</h4>
-                      </div>
-                      <span className="bg-emerald-50 text-emerald-600 font-mono text-[9px] px-2 py-0.5 rounded border border-emerald-100">
-                        Lines Active: 100%
-                      </span>
-                    </div>
+          {sidebarTab === "calls" && <CallHistory />}
 
-                    <div className="bg-white/40 rounded-xl p-6 border border-white/50 flex flex-col justify-center items-center text-center text-slate-800 flex-1">
-                      <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm text-indigo-500 mb-4">
-                        <PhoneIncoming className="w-8 h-8" />
-                      </div>
-                      <h3 className="font-bold text-slate-800 text-lg mb-2">Test Inbound Calling</h3>
-                      <p className="text-slate-500 text-sm mb-6 max-w-sm">
-                        Click the button below to directly simulate a custom inbound call. Our SkyAgent auto-attends and starts a dynamic conversation!
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 bg-white/60 p-2.5 rounded-xl border border-white/80">
-                      <div>
-                        <p className="text-[8px] text-slate-500 font-bold uppercase">Inbound Answered</p>
-                        <p className="text-xs font-black font-mono text-indigo-600 mt-0.5">{incomingCallsCount} Calls</p>
-                      </div>
-                      <div>
-                        <p className="text-[8px] text-slate-500 font-bold uppercase">Auto-Attend Status</p>
-                        <p className="text-xs font-black text-slate-800 mt-0.5">🟢 Auto-Attend ON</p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleSimulateInboundCall}
-                      disabled={!!activeContact}
-                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-100 disabled:text-slate-400 text-white text-xs font-bold py-2.5 px-3 rounded-xl transition duration-150 shadow-lg shadow-indigo-900/20"
-                    >
-                      <span>⚡ Simulate Inbound Call (Tamil Customer)</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="lg:col-span-6 min-h-[600px]">
-                  <LiveSimulator
-                    activeContact={activeContact}
-                    onCallEnded={handleCallEnded}
-                    campaignName={selectedCampaign?.name || "Default Campaign"}
-                  />
-                </div>
-              </div>
-            </>
-          )}
+          {sidebarTab === "reports" && <Reports />}
 
           {sidebarTab === "logs" && (
             <CallLogs

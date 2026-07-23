@@ -1,4 +1,4 @@
-from logging_config import setup_logging
+from logging_config import setup_logging, apply_access_log_filter
 LOG_FILE = setup_logging()
 
 from fastapi import FastAPI
@@ -23,6 +23,13 @@ app.add_middleware(
 
 app.include_router(voice_router)
 app.include_router(api_router)
+
+
+@app.on_event("startup")
+def _mute_polling_access_logs():
+    # uvicorn finishes wiring its own access-log handlers only by startup time,
+    # so re-attach the polling filter here to guarantee it sticks.
+    apply_access_log_filter()
 
 if __name__ == "__main__":
     import uvicorn
