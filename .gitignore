@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Recordings / call audio
+calls/
+recordings/
+
+# Build output
+dist/
+build/
+.next/
+
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
