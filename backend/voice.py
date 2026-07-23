@@ -26,11 +26,11 @@ SILENCE_THRESHOLD = 500
 MIN_SPEECH_DURATION_MS = 300
 # How long the caller must stay quiet before we treat the utterance as finished.
 # Too short cuts callers off mid-question (the LLM then answers a half-question).
-SILENCE_DURATION_MS = 900
+SILENCE_DURATION_MS = 1000
 # Higher than SPEECH_THRESHOLD: line/speaker echo of the agent's own TTS tends to come
 # back quieter than a caller actually talking, so barge-in needs a stricter bar to
 # avoid the agent interrupting itself.
-BARGE_IN_THRESHOLD = 2200
+BARGE_IN_THRESHOLD = 3200
 
 # Caller-silence handling: after this many seconds of dead air the agent asks
 # "are you there?"; another timeout with no reply and it says goodbye and hangs up.
@@ -893,6 +893,7 @@ async def sarvam_tts_fetch(text: str, lang: str) -> bytes:
         "model": "bulbul:v2",
         "speech_sample_rate": 16000,
         "enable_preprocessing": True,
+        "pace": 0.93
     }
     headers = {"api-subscription-key": sarvam_key, "Content-Type": "application/json"}
 
