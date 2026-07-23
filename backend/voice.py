@@ -40,12 +40,15 @@ MAX_CALL_DURATION_SECS = int(os.getenv("MAX_CALL_DURATION_SECS", "300"))
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
+CARTESIA_TTS_URL = "https://api.cartesia.ai/tts/bytes"
+CARTESIA_VERSION = "2024-11-13"
 SARVAM_LLM_BASE_URL = "https://api.sarvam.ai/v1"
 CEREBRAS_LLM_BASE_URL = "https://api.cerebras.ai/v1"
 GEMINI_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+TOGETHER_LLM_BASE_URL = "https://api.together.xyz/v1"
 
 COMPANY_NAME = "Daffytel Technologies"
-AGENT_NAME = "Daffy"
+AGENT_NAME = "caffy"
 
 # Set to "outbound" when Daffy is calling the customer (lead gen)
 # Set to "inbound" when the customer is calling in (support/sales inquiry)
@@ -249,7 +252,8 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
                 await speak_fallback(websocket, session_state)
                 return
 
-        if not transcript:
+        if not transcript or len(transcript.strip()) < 2:
+            logger.info(f"[ASR] Discarding empty or ambient noise transcript ('{transcript}').")
             return
 
         current_lang = session_state.get("language_code", "en-IN")
@@ -341,16 +345,23 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
         # 2. LLM provider. Best free option (tested 2026-07): Gemini flash-lite —
         # ~1s latency, clean Tanglish, follows the control markers. Fallback chain
         # on error: Sarvam-30b → Groq 8b. Override with LLM_PROVIDER.
+        together_key = os.getenv("TOGETHER_API_KEY")
         gemini_key = os.getenv("GEMINI_API_KEY")
         cerebras_key = os.getenv("CEREBRAS_API_KEY")
-        if gemini_key:
+        if together_key:
+            default_provider = "together"
+        elif gemini_key:
             default_provider = "gemini"
         elif cerebras_key:
             default_provider = "cerebras"
         else:
             default_provider = "groq"
         llm_provider = os.getenv("LLM_PROVIDER", default_provider).lower()
-        if llm_provider == "gemini" and gemini_key:
+        if llm_provider == "together" and together_key:
+            llm_client = AsyncOpenAI(base_url=TOGETHER_LLM_BASE_URL, api_key=together_key, max_retries=0)
+            model_name = os.getenv("TOGETHER_LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
+            llm_max_tokens = 400
+        elif llm_provider == "gemini" and gemini_key:
             llm_client = AsyncOpenAI(base_url=GEMINI_LLM_BASE_URL, api_key=gemini_key, max_retries=0)
             # NOTE: use the "-latest" aliases — fixed-version models (gemini-2.5-*)
             # are closed to new accounts. flash-lite is fast and non-thinking;
@@ -370,7 +381,7 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
             llm_max_tokens = 1600
         else:
             llm_client = AsyncGroq(api_key=groq_key, max_retries=0)
-            model_name = "llama-3.3-70b-versatile"
+            model_name = os.getenv("GROQ_LLM_MODEL", "llama-3.1-8b-instant")
             llm_max_tokens = 400
         FALLBACK_MODEL = "llama-3.1-8b-instant"
         
@@ -488,7 +499,13 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
                     history.append({"role": "assistant", "content": " ".join(sentences)})
                 return
                 
-            text = chunk.choices[0].delta.content
+            # Defensive check to handle empty usage/metadata chunks safely
+            if not hasattr(chunk, "choices") or not chunk.choices:
+                continue
+            delta = getattr(chunk.choices[0], "delta", None)
+            if not delta:
+                continue
+            text = getattr(delta, "content", None) or ""
             if not text:
                 continue
             
@@ -560,11 +577,18 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
         add_transcript(session_state, "agent", full_reply, current_lang)
 
         # LLM signalled the conversation is over — hang up gracefully.
-        # Guard: if the reply still asks the customer a question, the LLM fired
-        # END_CALL prematurely — ignore it and keep the conversation going.
+        # Guard: if the reply still asks the customer a question or solicits information,
+        # the LLM fired END_CALL prematurely — ignore it and keep the conversation going.
         if session_state.get("pending_end_call"):
-            if full_reply.rstrip().endswith(("?", "؟")):
-                logger.warning("[CALL FLOW] END_CALL ignored — reply still asks a question.")
+            lower_reply = full_reply.lower()
+            soliciting_info = any(kw in lower_reply for kw in [
+                "number", "mobile", "phone", "email", "time", "date", "demo", "schedule", "when", "contact",
+                "details", "repeat", "pardon", "again", "convenient", "tell me", "share"
+            ])
+            is_question = full_reply.rstrip().endswith(("?", "؟")) or "?" in full_reply
+            
+            if is_question or soliciting_info:
+                logger.warning(f"[CALL FLOW] Premature END_CALL ignored — reply is still continuing conversation: '{full_reply[:60]}...'")
                 session_state["pending_end_call"] = False
             else:
                 await finalize_call(websocket, session_state)
@@ -795,6 +819,65 @@ async def azure_tts_fetch(text: str, lang: str) -> bytes:
         return b""
 
 
+async def cartesia_tts_fetch(text: str, lang: str) -> bytes:
+    """Fetch audio from Cartesia Sonic 3.5 TTS. Uses the Tamil 'Kavitha' voice for the
+    agent. Requests raw 16kHz mono PCM so it drops straight into the playback pipeline
+    with no header stripping needed."""
+    cartesia_key = os.getenv("CARTESIA_API_KEY")
+    if not cartesia_key:
+        return b""
+
+    # Per-language voice ids (Cartesia voice ids are UUIDs). Kavitha is the Tamil voice.
+    CARTESIA_VOICES = {
+        "ta-IN": os.getenv("CARTESIA_VOICE_TA", os.getenv("CARTESIA_KAVITHA_VOICE_ID", "")),
+        "en-IN": os.getenv("CARTESIA_VOICE_EN", ""),
+        "hi-IN": os.getenv("CARTESIA_VOICE_HI", ""),
+    }
+    # Default the agent's voice to Kavitha (Tamil) when a language-specific id isn't set.
+    voice_id = CARTESIA_VOICES.get(lang) or os.getenv("CARTESIA_KAVITHA_VOICE_ID", "")
+    if not voice_id:
+        return b""
+
+    # Cartesia language codes are ISO-639-1 (e.g. "ta"), not the "ta-IN" locale form.
+    cartesia_lang = (lang or "en-IN").split("-")[0]
+
+    payload = {
+        "model_id": os.getenv("CARTESIA_MODEL_ID", "sonic-2"),
+        "transcript": text,
+        "voice": {"mode": "id", "id": voice_id},
+        "language": cartesia_lang,
+        "output_format": {
+            "container": "raw",
+            "encoding": "pcm_s16le",
+            "sample_rate": 16000,
+        },
+    }
+    headers = {
+        "X-API-Key": cartesia_key,
+        "Cartesia-Version": CARTESIA_VERSION,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        t0 = time.time()
+        async with httpx.AsyncClient() as client:
+            res = await client.post(CARTESIA_TTS_URL, json=payload, headers=headers, timeout=15.0)
+            if res.status_code != 200:
+                logger.error(f"[CARTESIA TTS] Error {res.status_code}: {res.text[:200]}")
+                return b""
+            # container=raw returns bare PCM — no WAV header to strip.
+            audio_bytes = res.content
+            logger.info(
+                f"[CARTESIA TTS] Fetched '{text[:40]}' via {payload['model_id']} "
+                f"(voice {voice_id[:8]}…, {cartesia_lang}) in {int((time.time()-t0)*1000)}ms. "
+                f"Raw: {len(audio_bytes)} bytes."
+            )
+            return audio_bytes
+    except Exception as e:
+        logger.error(f"[CARTESIA TTS] Exception: {e}")
+        return b""
+
+
 async def sarvam_tts_fetch(text: str, lang: str) -> bytes:
     """Fetch audio from Sarvam Bulbul TTS — Indic-specialised, handles Tanglish
     (Tamil script mixed with English words) naturally."""
@@ -833,7 +916,14 @@ async def sarvam_tts_fetch(text: str, lang: str) -> bytes:
 
 
 async def tts_fetch(text: str, lang: str) -> bytes:
-    """Primary: Sarvam Bulbul (when SARVAM_API_KEY is set). Fallback: Azure Neural."""
+    """Primary: Cartesia Sonic 3.5 with the Tamil 'Kavitha' voice (when CARTESIA_API_KEY
+    is set). Fallbacks: Sarvam Bulbul → Azure Neural."""
+    audio = await cartesia_tts_fetch(text, lang)
+    if audio:
+        return audio
+    if os.getenv("CARTESIA_API_KEY") and (os.getenv("CARTESIA_KAVITHA_VOICE_ID") or os.getenv("CARTESIA_VOICE_TA") or os.getenv("CARTESIA_VOICE_EN")):
+        logger.warning("[TTS] Cartesia failed — falling back to Sarvam.")
+
     audio = await sarvam_tts_fetch(text, lang)
     if audio:
         return audio

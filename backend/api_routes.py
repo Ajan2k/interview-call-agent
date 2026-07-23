@@ -61,9 +61,9 @@ def get_health():
         "databaseConnected": db_connected,
         "databaseType": "PostgreSQL" if db_connected else "In-Memory (Fallback)",
         "services": {
-            "stt": "Groq Whisper",
-            "llm": "Groq LLaMA 3.3 70B",
-            "tts": "Azure Neural TTS"
+            "stt": "Sarvam (Groq Whisper fallback)",
+            "llm": "Groq LLaMA 3.1 8B Instant",
+            "tts": "Cartesia Sonic 3.5 (Sarvam/Azure fallback)"
         }
     }
 

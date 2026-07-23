@@ -7,3 +7,5 @@ groq
 python-multipart
 openai
 psycopg2-binary
+pytest
+pytest-asyncio
