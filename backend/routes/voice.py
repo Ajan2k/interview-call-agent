@@ -26,20 +26,21 @@ from services.voice import (
     MAX_CALL_DURATION_SECS,
 )
 
+from core.config import settings
+
 convo_logger = get_conversation_logger()
 router = APIRouter(tags=["voice"])
 
-# Directory and log paths relative to backend root
-_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RECORDINGS_DIR = os.path.join(_BACKEND_DIR, "recordings")
-LOGS_DIR = os.path.join(_BACKEND_DIR, "logs")
+# Directory and log paths from settings
+RECORDINGS_DIR = str(settings.RECORDINGS_DIR)
+LOGS_DIR = str(settings.LOGS_DIR)
 CALLS_LOG_PATH = os.path.join(LOGS_DIR, "calls.jsonl")
 MEETINGS_LOG_PATH = os.path.join(LOGS_DIR, "meetings.jsonl")
-LEADS_LOG_PATH = os.path.join(_BACKEND_DIR, "leads.log")
+LEADS_LOG_PATH = os.path.join(str(settings.BACKEND_DIR), "leads.log")
 
 # Model configuration defaults (used by tests for env-var contracts & guardrails)
-DEFAULT_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "llama-3.1-8b-instant")
-FALLBACK_MODEL = "llama-3.1-8b-instant"
+DEFAULT_GROQ_MODEL = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.8-27b")
+FALLBACK_MODEL = "openai/gpt-oss-20b"
 
 # Initialize modular service instances
 audio_processor = AudioProcessor()

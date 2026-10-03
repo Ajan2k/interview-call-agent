@@ -1,46 +1,74 @@
-# 🤖 TeleForce Agent — AI Calling Agent Platform
+# 🤖 TalentAI — Autonomous AI Interview Agent Platform
 
-> An end-to-end AI-powered voice calling platform that makes outbound sales calls and handles inbound customer queries — in **Tamil, English, Hindi, and more** — 24/7, without human intervention.
-
-Built for **Daffytel Technologies** to power *Daffy*, an AI sales agent that books demos, captures leads, and handles objections naturally over the phone.
+> An end-to-end autonomous AI-powered technical and behavioral interview platform. It ingests candidate resumes, extracts experience profiles, analyzes target job descriptions, autonomously creates personalized technical and behavioral questions, conducts real-time conversational phone interviews, and delivers comprehensive AI evaluation scorecards.
 
 ---
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
-- [Features](#features)
+- [Key Features](#key-features)
+- [Autonomous Interview Workflow](#autonomous-interview-workflow)
 - [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
+- [Project Architecture](#project-architecture)
 - [Prerequisites](#prerequisites)
 - [Setup & Installation](#setup--installation)
 - [Environment Variables](#environment-variables)
 - [Running the Application](#running-the-application)
 - [API Reference](#api-reference)
-- [Dashboard Overview](#dashboard-overview)
+- [Testing & Quality Verification](#testing--quality-verification)
 
 ---
 
 ## Overview
 
-TeleForce Agent is a full-stack AI calling platform consisting of:
+**TalentAI Interview Agent** transforms traditional recruiting by automating the preliminary screening process:
 
-- **Backend** — FastAPI server that manages WebSocket voice sessions, PostgreSQL data storage, call logging, and REST APIs.
-- **Frontend** — React + Vite dashboard for monitoring live calls, viewing call logs, tracking leads, scheduling, and exporting reports.
-- **AI Voice Agent (Daffy)** — Powered by Groq (LLM) + Azure Speech Services (TTS/STT), capable of natural multilingual conversations with automatic language detection.
+1. **Candidate Dossier Ingestion** — Upload PDF or DOCX candidate resumes alongside the target Job Description (JD), candidate name, phone number, and position.
+2. **Autonomous Question Formulation** — The LLM analyzes the candidate's resume and compares it against the JD to autonomously generate **up to 10 personalized technical questions** focused on skills, architectural decisions, and gap areas, paired with **5 fixed behavioral questions** using the STAR methodology (Situation, Task, Action, Result).
+3. **Voice Screening Execution** — The voice engine initiates or receives the candidate's call via SIP/WebRTC, conducts an empathetic, natural screening interview, manages speaking turn-taking, and records candidate responses.
+4. **Automated AI Scorecard & Evaluation** — At the conclusion of the interview, the AI generates a multi-dimensional evaluation scorecard: overall score (0-100), hire/reject recommendation, technical/behavioral/communication ratings, key strengths, areas for improvement, and a hiring manager summary.
 
 ---
 
-## Features
+## Key Features
 
-- 🎙️ **Real-time Voice AI** — WebSocket-based bidirectional audio streaming with Azure Speech STT and TTS
-- 🧠 **LLM-Powered Conversations** — Groq API (LLaMA) drives natural, context-aware responses
-- 🌐 **Multilingual Support** — Tamil, English, Hindi, Telugu, and more with automatic language detection
-- 📋 **Lead Capture** — Automatically extracts lead details (name, business, phone, need) from conversations
-- 📅 **Meeting Booking** — Detects demo bookings and callback requests from conversation context
-- 📊 **Live Dashboard** — Real-time call monitoring, metrics, call history, conversation logs
-- 📤 **Reports & Export** — Download call logs and lead reports as CSV
-- 🔒 **Secure Config** — All API keys managed via environment variables, never hardcoded
+- 📄 **Resume Parsing (PDF & DOCX)** — Robust document extraction using `pypdf` and `python-docx` with fallback text parsing.
+- 🎯 **Autonomous Question Generation** — Up to 10 tailored technical questions based directly on the intersection of candidate resume projects and JD requirements.
+- 💬 **5 Fixed Behavioral Questions** — Pre-configured STAR-framework behavioral questions editable directly in the UI or settings.
+- 🎙️ **Real-Time Voice Conversational Engine** — Sub-500ms audio pipeline with Azure Speech (TTS/STT), Groq LLaMA models, and SIP.js WebRTC audio bridge.
+- 🌐 **Multilingual Voice Capabilities** — Fluent conversational support across English, Tamil, Hindi, Telugu, Kannada, and Malayalam.
+- 📊 **Automated AI Scorecard & Dossier** — Instant evaluation of interview transcripts against target JD competencies.
+- 💼 **Recruiter Pipeline Dashboard** — Sleek React + Tailwind UI for managing candidates, reviewing roadmaps, initiating calls, and inspecting scorecards.
+
+---
+
+## Autonomous Interview Workflow
+
+```
+Candidate Upload (PDF/DOCX Resume + JD + Role)
+                 │
+                 ▼
+Document Parsing (`document_parser.py`)
+                 │
+                 ▼
+Autonomous Question Generation (`interview_service.py`)
+  ├── 5 Fixed Behavioral Questions (STAR Method)
+  └── Up to 10 Personalized Technical Questions (Resume + JD)
+                 │
+                 ▼
+Candidate Interview Call (SIP / WebRTC / Phone)
+  ├── Warm greeting & confirmation
+  ├── Structured, conversational Q&A
+  └── Real-time streaming voice loop
+                 │
+                 ▼
+Automated AI Scorecard Generation
+  ├── Overall Score (0-100) & Hire/Consider/Reject Recommendation
+  ├── Technical (0-100), Behavioral (0-100), Communication (0-100)
+  ├── Strengths & Improvement Areas
+  └── Executive Summary
+```
 
 ---
 
@@ -49,170 +77,115 @@ TeleForce Agent is a full-stack AI calling platform consisting of:
 ### Backend
 | Technology | Purpose |
 |---|---|
-| **FastAPI** | REST API + WebSocket server |
-| **Uvicorn** | ASGI server |
-| **Groq API** | LLM inference (LLaMA models) |
-| **Azure Speech SDK** | Speech-to-Text & Text-to-Speech |
-| **PostgreSQL** | Persistent storage (calls, leads, meetings, contacts) |
-| **psycopg2** | PostgreSQL driver |
-| **python-dotenv** | Environment variable management |
+| **FastAPI** | High-performance async REST & WebSocket server |
+| **Groq API (LLaMA)** | High-speed LLM inference for question generation, dialogue & evaluation |
+| **Azure Speech Services** | Neural Text-to-Speech (TTS) & Speech-to-Text (STT) |
+| **pypdf & python-docx** | Document extraction for resumes |
+| **PostgreSQL** | Primary persistence store with JSON fallback |
+| **Pydantic v2** | Data schema validation and serialization |
 
 ### Frontend
 | Technology | Purpose |
 |---|---|
-| **React 19** | UI framework |
-| **Vite** | Build tool & dev server |
-| **TypeScript** | Type safety |
-| **Tailwind CSS v4** | Styling |
-| **SIP.js** | SIP/VoIP protocol support |
+| **React 19** | Modern UI framework |
+| **Vite** | Build tool & HMR dev server |
+| **TypeScript** | End-to-end type safety |
+| **Tailwind CSS v4** | Clean design system |
+| **SIP.js** | VoIP/SIP protocol integration |
 | **Lucide React** | Icons |
-| **XLSX** | Excel report exports |
 
 ---
 
-## Project Structure
+## Project Architecture
 
 ```
-teleforce-agent/
+AI-Call-Agent/
 ├── backend/
-│   ├── main.py               # FastAPI app entry point (lifespan managed)
-│   ├── requirements.txt      # Python dependencies
-│   ├── .env.example          # Environment variable template
-│   ├── pytest.ini            # Pytest configuration
-│   ├── core/                 # Central application configuration & logging
-│   │   ├── config.py         # BaseSettings, SecretStr, PostgresDsn & default_factory
-│   │   ├── logging.py        # Centralized structured logging & polling noise filter
-│   │   └── __init__.py
-│   ├── routes/               # Modular category routes
-│   │   ├── voice.py          # WebSocket voice session router & endpoint (/api/voice/teleforce_stream)
-│   │   ├── health.py         # /api/health
-│   │   ├── contacts.py       # /api/contacts
-│   │   ├── campaigns.py      # /api/campaigns
-│   │   ├── calls.py          # /api/call-history, /api/recordings
-│   │   ├── meetings.py       # /api/meetings
-│   │   ├── callbacks.py      # /api/callbacks
-│   │   ├── reports.py        # /api/report
-│   │   ├── voice_config.py   # /api/voice-config
-│   │   ├── translate.py      # /api/translate
-│   │   ├── logs.py           # /api/logs
-│   │   └── __init__.py       # Combined API router
-│   ├── models/               # Object-oriented domain entities
-│   │   ├── contact.py        # Contact dataclass
-│   │   ├── campaign.py       # Campaign dataclass
-│   │   ├── call.py           # Call dataclass
-│   │   ├── meeting.py        # Meeting dataclass
-│   │   ├── callback.py       # Callback dataclass
-│   │   └── voice_config.py   # VoiceConfig dataclass
-│   ├── schemas/              # Pydantic request/response validation
+│   ├── main.py                  # FastAPI application entry point
+│   ├── requirements.txt         # Python dependencies (includes pypdf, python-docx)
+│   ├── core/                    # Core configuration and logging
+│   │   ├── config.py            # Pydantic BaseSettings, SecretStr, PostgresDsn
+│   │   └── logging.py           # Structured logging and request filtering
+│   ├── models/                  # Domain entities
+│   │   ├── candidate.py         # Candidate, Question, Scorecard models
+│   │   ├── contact.py           # Contact entity
+│   │   ├── campaign.py          # Campaign entity
+│   │   ├── call.py              # Call records
+│   │   └── voice_config.py      # Voice configuration entity
+│   ├── schemas/                 # Pydantic request/response schemas
+│   │   ├── candidate.py         # CandidateCreate, ScorecardSchema, QuestionSchema
 │   │   ├── contact.py
-│   │   ├── campaign.py
-│   │   ├── call.py
-│   │   ├── meeting.py
-│   │   ├── callback.py
-│   │   ├── voice_config.py
-│   │   ├── translate.py
-│   │   ├── report.py
-│   │   ├── health.py
-│   │   └── log.py
-│   ├── services/             # Class-based repositories & business services
-│   │   ├── database_manager.py # DatabaseManager & entity repositories
-│   │   ├── report_service.py   # ReportService & CSV generator
-│   │   ├── translation_service.py # TranslationService (Sarvam)
-│   │   ├── log_service.py      # LogService
-│   │   └── voice/              # Modular Voice AI subsystems
-│   │       ├── audio.py        # AudioProcessor & CallRecorder
-│   │       ├── markers.py      # MarkerService & control tag parsing
-│   │       ├── prompts.py      # PromptManager & multilingual scripts
-│   │       ├── tts.py          # TTSService (Cartesia/Sarvam/Azure)
-│   │       ├── stt.py          # STTService (Sarvam/Groq Whisper & language detection)
-│   │       ├── llm.py          # LLMService (multi-provider streaming & fallback)
-│   │       ├── session_manager.py # VoiceSessionManager (VAD loop & state machine)
-│   │       └── __init__.py
-│   ├── prompts/              # System prompt templates
-│   │   ├── inbound_prompt.txt   # System prompt for inbound calls
-│   │   └── outbound_prompt.txt  # System prompt for outbound calls (Daffy)
-│   └── tests/                # Automated pytest suite (86 unit & integration tests)
+│   │   └── ...
+│   ├── services/                # Business services & repositories
+│   │   ├── document_parser.py   # PDF & DOCX text extraction
+│   │   ├── interview_service.py # Autonomous question generation & evaluation
+│   │   ├── candidate_repository.py # Candidate database persistence
+│   │   ├── database_manager.py  # PostgreSQL manager
+│   │   └── voice/               # Modular Voice AI engine
+│   │       ├── session_manager.py # Voice state machine & candidate session binding
+│   │       ├── prompts.py       # Candidate interview prompt generator
+│   │       ├── llm.py           # Multi-provider LLM streaming
+│   │       ├── tts.py           # Azure / Sarvam / Cartesia TTS
+│   │       └── stt.py           # Whisper / Azure STT
+│   ├── routes/                  # API routers
+│   │   ├── candidates.py        # /api/candidates endpoints (CRUD, upload, evaluate)
+│   │   ├── voice.py             # WebSocket audio stream (/api/voice/teleforce_stream)
+│   │   ├── voice_config.py      # /api/voice-config
+│   │   └── ...
+│   └── tests/                   # Pytest test suite (95 passing tests)
 │
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx               # Root application component
-│   │   ├── main.tsx              # React entry point
-│   │   ├── types.ts              # TypeScript interfaces
-│   │   ├── index.css             # Tailwind CSS & custom design system
-│   │   ├── components/
-│   │   │   ├── ui/                  # Reusable UI design system & table components
-│   │   │   │   ├── TableComponents.tsx
-│   │   │   │   └── index.ts
-│   │   │   ├── TeleforceAgent.tsx   # Main agent control panel & SIP integration
-│   │   │   ├── CallLogs.tsx         # Live & historical call logs
-│   │   │   ├── CallHistory.tsx      # Call history table
-│   │   │   ├── Metrics.tsx          # Performance metrics
-│   │   │   ├── Reports.tsx          # Reporting & CSV export
-│   │   │   ├── ScheduleTracker.tsx  # Meeting/demo scheduler
-│   │   │   ├── ConversationModal.tsx # Conversation detail view
-│   │   │   └── LiveSimulator.tsx    # Browser-based call simulator
-│   │   └── utils/
-│   │       └── excelParser.ts    # Excel and CSV contact importer
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── .env.example
-│
-└── .gitignore
+└── frontend/
+    ├── src/
+    │   ├── App.tsx              # Main dashboard with Candidate Pipeline navigation
+    │   ├── types.ts             # TypeScript definitions (Candidate, Scorecard, Question)
+    │   ├── components/
+    │   │   ├── CandidateManager.tsx # Candidate cards, resume dropzone, scorecards & roadmap
+    │   │   ├── TeleforceAgent.tsx   # Live call keypad, WebRTC audio bridge & live badge
+    │   │   ├── Metrics.tsx
+    │   │   ├── CallLogs.tsx
+    │   │   ├── CallHistory.tsx
+    │   │   ├── Reports.tsx
+    │   │   └── ScheduleTracker.tsx
+    │   └── utils/
+    └── package.json
 ```
 
 ---
 
 ## Prerequisites
 
-Make sure you have the following installed:
-
 - **Python 3.10+**
 - **Node.js 18+** and **npm**
-- **PostgreSQL 13+**
-- A **Groq API key** — [console.groq.com](https://console.groq.com)
-- An **Azure Speech Services** key — [portal.azure.com](https://portal.azure.com)
+- **PostgreSQL 13+** (optional; in-memory / JSON fallback operates automatically if database is unavailable)
+- **Groq API Key** — [console.groq.com](https://console.groq.com)
+- **Azure Speech Services Key** — [portal.azure.com](https://portal.azure.com)
 
 ---
 
 ## Setup & Installation
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/infinitetechchennai/AI-Call-Agent.git
-cd AI-Call-Agent
-```
-
-### 2. Backend Setup
+### 1. Backend Setup
 
 ```bash
 cd backend
 
 # Create and activate virtual environment
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS/Linux
-source venv/bin/activate
+venv\Scripts\activate       # Windows
+# source venv/bin/activate  # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy env template and fill in your keys
+# Create .env from template
 copy .env.example .env
 ```
 
-### 3. Frontend Setup
+### 2. Frontend Setup
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Copy env template
 copy .env.example .env
 ```
 
@@ -220,126 +193,87 @@ copy .env.example .env
 
 ## Environment Variables
 
-### Backend — `backend/.env`
+### Backend (`backend/.env`)
 
 ```env
 # Groq LLM API
 GROQ_API_KEY=your_groq_api_key_here
 
-# Azure Speech Services
+# Azure Speech Services (TTS & STT)
 AZURE_SPEECH_KEY=your_azure_speech_key_here
 AZURE_SPEECH_REGION=centralindia
 
-# PostgreSQL Database
+# PostgreSQL Database (Optional)
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_db_password
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=skyagent
-
-# Optional: Full connection string (overrides individual fields above)
-# DATABASE_URL=postgresql://user:password@localhost:5432/skyagent
-```
-
-### Frontend — `frontend/.env`
-
-```env
-# Backend API URL (default points to local backend)
-VITE_API_URL=http://localhost:8000
 ```
 
 ---
 
 ## Running the Application
 
-### Start the Backend
+### Start the Backend Server
 
 ```bash
 cd backend
+venv\Scripts\activate
 uvicorn main:app --reload --port 8000
 ```
 
-The API will be available at `http://localhost:8000`  
-API docs (Swagger): `http://localhost:8000/docs`
+- API Base: `http://localhost:8000`
+- Interactive Swagger Documentation: `http://localhost:8000/docs`
 
-### Start the Frontend
+### Start the Frontend Dev Server
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-The dashboard will be available at `http://localhost:5173`
+- Dashboard: `http://localhost:5173`
 
 ---
 
-## 🧪 Running Tests & Quality Checks
+## API Reference
 
-### Backend Tests (pytest)
+### Candidate & Interview Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/candidates` | Create candidate with multipart form (Resume PDF/DOCX, name, phone, position, JD) |
+| `GET` | `/api/candidates` | List all candidates in pipeline with interview status & scores |
+| `GET` | `/api/candidates/{id}` | Get candidate dossier, questions roadmap, and scorecard |
+| `PUT` | `/api/candidates/{id}/questions` | Update or customize the candidate's interview questions |
+| `POST` | `/api/candidates/{id}/evaluate` | Trigger AI evaluation and scorecard generation |
+| `DELETE` | `/api/candidates/{id}` | Remove candidate from pipeline |
+| `GET` | `/api/candidates/behavioral-defaults` | Get standard 5 STAR behavioral questions |
+
+### Voice & Call Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `WS` | `/api/voice/teleforce_stream` | Bi-directional WebSocket audio bridge for live interview calls |
+| `GET` | `/api/voice-config` | Retrieve current interviewer persona and prompt configuration |
+| `POST` | `/api/voice-config` | Update interviewer persona and prompt configuration |
+| `GET` | `/api/health` | System health check and API key verification |
+
+---
+
+## Testing & Quality Verification
+
+Run the comprehensive pytest test suite (covers candidate parsing, autonomous question generation, scorecards, audio processing, markers, and REST endpoints):
 
 ```bash
 cd backend
 python -m pytest
 ```
 
-Runs the 79 automated unit and integration tests covering:
-- Audio WAV buffering & RIFF header manipulation
-- Control marker extraction (`[END_CALL]`, `[MEETING_BOOKED]`, `[CALLBACK]`, `[LEAD]`)
-- Multi-provider TTS pipelines (Cartesia, Sarvam, Azure)
-- LLM provider dispatching & prompt script loading
-- FastAPI REST integration & error handling
-- Dual-track call audio recorder & noise filtering
-
-### Frontend Typecheck & Build
+Build the frontend bundle to ensure strict TypeScript validation:
 
 ```bash
 cd frontend
-npm run lint       # TypeScript strict type checking
-npm run build      # Production bundle generation
+npm run build
 ```
-
-## API Reference
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/health` | Health check + API key status |
-| `GET` | `/api/calls` | Fetch call history |
-| `GET` | `/api/leads` | Fetch captured leads |
-| `GET` | `/api/meetings` | Fetch booked meetings |
-| `GET` | `/api/contacts` | Fetch contact list |
-| `POST` | `/api/contacts` | Add a new contact |
-| `GET` | `/api/campaigns` | Fetch campaigns |
-| `POST` | `/api/campaigns` | Create a campaign |
-| `GET` | `/api/voice-config` | Get current voice/prompt config |
-| `PUT` | `/api/voice-config` | Update voice/prompt config |
-| `GET` | `/api/export/calls` | Export calls as CSV |
-| `GET` | `/api/recordings/{filename}` | Stream a call recording |
-| `WS` | `/ws` | WebSocket voice session |
-
----
-
-## Dashboard Overview
-
-| Section | Description |
-|---|---|
-| **Agent Control** | Start/stop the AI agent, configure voice settings |
-| **Call Logs** | Live call feed with conversation transcripts |
-| **Call History** | Full historical call log with search & filter |
-| **Metrics** | KPIs: total calls, leads, meetings, success rate |
-| **Schedule Tracker** | View upcoming demos and callbacks |
-| **Reports** | Generate and export CSV reports |
-
----
-
-## ⚠️ Important Notes
-
-- **Never commit your `.env` file** — it contains sensitive API keys
-- The `backend/venv/` directory is excluded from git — always run `pip install -r requirements.txt` after cloning
-- The `frontend/node_modules/` directory is excluded — always run `npm install` after cloning
-- Call `recordings/` and `logs/` are excluded from git as they may contain personal data
-
----
-
-## License
-
-Private — All rights reserved © Daffytel Technologies

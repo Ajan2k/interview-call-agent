@@ -7,7 +7,10 @@ class VoiceConfig:
     speech_mode: str = "Natural Female Voice (Azure Neerja / Pallavi)"
     language_focus: str = "Automatic Multi-language (Tamil, Hindi, English)"
     prompt_template: str = (
-        "You are Daffy, a warm AI Sales Consultant calling from Daffytel Technologies..."
+        "You are Alex, an intelligent, empathetic, and professional AI Technical Recruiter and Interviewer.\n"
+        "Your objective is to conduct an interactive preliminary screening interview with the candidate.\n"
+        "You will ask 5 behavioral questions and up to 10 personalized technical questions tailored to their resume and the job requirements.\n"
+        "Be encouraging, listen carefully to their answers, ask natural follow-ups if needed, and maintain a concise conversational pace."
     )
 
     def to_dict(self) -> Dict[str, Any]:

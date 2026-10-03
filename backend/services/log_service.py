@@ -1,15 +1,13 @@
 import os
 from typing import List, Dict, Any
+from core.config import settings
 
 
 class LogService:
     """Class-based service for accessing and managing conversation and system logs."""
 
     def __init__(self, log_dir: str = None):
-        if log_dir is None:
-            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            log_dir = os.path.join(backend_dir, "logs")
-        self.log_dir = log_dir
+        self.log_dir = log_dir or str(settings.LOGS_DIR)
         self.conversation_log_path = os.path.join(self.log_dir, "conversation.log")
 
     def get_recent_conversation_logs(self, limit: int = 50) -> List[Dict[str, Any]]:

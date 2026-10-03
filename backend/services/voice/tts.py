@@ -6,12 +6,13 @@ import logging
 import httpx
 from fastapi import WebSocket
 from services.voice.audio import AudioProcessor
+from core.config import settings
 
 logger = logging.getLogger("voice.tts")
 
-SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
-CARTESIA_TTS_URL = "https://api.cartesia.ai/tts/bytes"
-CARTESIA_VERSION = "2024-11-13"
+SARVAM_TTS_URL = settings.SARVAM_TTS_URL
+CARTESIA_TTS_URL = settings.CARTESIA_TTS_URL
+CARTESIA_VERSION = settings.CARTESIA_VERSION
 
 AZURE_VOICES = {
     "en-IN": "en-IN-NeerjaNeural",
@@ -31,8 +32,8 @@ class TTSService:
 
     async def azure_tts_fetch(self, text: str, lang: str) -> bytes:
         """Fetch audio from Microsoft Azure Neural TTS."""
-        azure_key = os.getenv("AZURE_SPEECH_KEY")
-        azure_region = os.getenv("AZURE_SPEECH_REGION", "centralindia")
+        azure_key = settings.get_azure_speech_key()
+        azure_region = settings.get_azure_speech_region()
         if not azure_key:
             return b""
 
@@ -44,12 +45,12 @@ class TTSService:
         </voice>
     </speak>"""
 
-        url = f"https://{azure_region}.tts.speech.microsoft.com/cognitiveservices/v1"
+        url = settings.AZURE_TTS_URL_TEMPLATE.format(region=azure_region)
         headers = {
             "Ocp-Apim-Subscription-Key": azure_key,
             "Content-Type": "application/ssml+xml",
             "X-Microsoft-OutputFormat": "riff-16khz-16bit-mono-pcm",
-            "User-Agent": "DaffytelAI",
+            "User-Agent": "TalentAI-Interviewer",
         }
 
         try:
@@ -71,23 +72,18 @@ class TTSService:
 
     async def cartesia_tts_fetch(self, text: str, lang: str) -> bytes:
         """Fetch audio from Cartesia Sonic 3.5 TTS."""
-        cartesia_key = os.getenv("CARTESIA_API_KEY")
+        cartesia_key = settings.get_cartesia_api_key()
         if not cartesia_key:
             return b""
 
-        cartesia_voices = {
-            "ta-IN": os.getenv("CARTESIA_VOICE_TA", os.getenv("CARTESIA_KAVITHA_VOICE_ID", "")),
-            "en-IN": os.getenv("CARTESIA_VOICE_EN", ""),
-            "hi-IN": os.getenv("CARTESIA_VOICE_HI", ""),
-        }
-        voice_id = cartesia_voices.get(lang) or os.getenv("CARTESIA_KAVITHA_VOICE_ID", "")
+        voice_id = settings.get_cartesia_voice(lang)
         if not voice_id:
             return b""
 
         cartesia_lang = (lang or "en-IN").split("-")[0]
 
         payload = {
-            "model_id": os.getenv("CARTESIA_MODEL_ID", "sonic-2"),
+            "model_id": settings.get_cartesia_model(),
             "transcript": text,
             "voice": {"mode": "id", "id": voice_id},
             "language": cartesia_lang,
@@ -123,7 +119,7 @@ class TTSService:
 
     async def sarvam_tts_fetch(self, text: str, lang: str) -> bytes:
         """Fetch audio from Sarvam Bulbul TTS."""
-        sarvam_key = os.getenv("SARVAM_API_KEY")
+        sarvam_key = settings.get_sarvam_api_key()
         if not sarvam_key:
             return b""
 
@@ -131,7 +127,7 @@ class TTSService:
         payload = {
             "text": text,
             "target_language_code": lang if lang in supported else "en-IN",
-            "speaker": os.getenv("SARVAM_TTS_SPEAKER", "anushka"),
+            "speaker": settings.get_sarvam_tts_speaker(),
             "model": "bulbul:v2",
             "speech_sample_rate": 16000,
             "enable_preprocessing": True,
@@ -176,17 +172,16 @@ class TTSService:
         audio = await cart_fn(text, lang)
         if audio:
             return audio
-        if os.getenv("CARTESIA_API_KEY") and (
-            os.getenv("CARTESIA_KAVITHA_VOICE_ID")
-            or os.getenv("CARTESIA_VOICE_TA")
-            or os.getenv("CARTESIA_VOICE_EN")
+        if settings.get_cartesia_api_key() and (
+            settings.get_cartesia_voice("ta-IN")
+            or settings.get_cartesia_voice("en-IN")
         ):
             logger.warning("[TTS] Cartesia failed — falling back to Sarvam.")
 
         audio = await sarv_fn(text, lang)
         if audio:
             return audio
-        if os.getenv("SARVAM_API_KEY"):
+        if settings.get_sarvam_api_key():
             logger.warning("[TTS] Sarvam failed — falling back to Azure.")
         return await az_fn(text, lang)
 

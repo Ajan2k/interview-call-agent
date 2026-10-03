@@ -1,11 +1,13 @@
 import os
 import logging
+from typing import Optional, List, Dict, Any
+from core.config import settings
 
 logger = logging.getLogger("voice.prompts")
 
-COMPANY_NAME = "Daffytel Technologies"
-AGENT_NAME = "caffy"
-CALL_MODE = "outbound"
+COMPANY_NAME = settings.COMPANY_NAME
+AGENT_NAME = settings.AGENT_NAME
+CALL_MODE = "interview"
 
 LANG_MAP = {
     "en-IN": "English",
@@ -36,40 +38,36 @@ WHISPER_LANG_MAP = {
     "kn": "kn-IN",
     "ml": "ml-IN",
     "en": "en-IN",
-    "mr": "hi-IN",  # Marathi -> treat as Hindi
+    "mr": "hi-IN",
 }
 
 FEW_SHOT = {
     "Tamil": (
-        "Daffy's natural spoken TANGLISH style (Tamil script + everyday English words, exactly how people actually talk on the phone):\n"
-        "- சரிங்க! உங்க business ல daily எவ்வளோ calls வரும்?\n"
-        "- ஓ அப்படியா! Night ல வர்ற calls எல்லாம் miss ஆகுதா? எங்க AI agent 24/7 எல்லா calls யும் attend பண்ணிடும்.\n"
-        "- Super! உங்களுக்கு ஒரு free demo arrange பண்ணிடுறேன் — எந்த day, என்ன time convenient ஆ இருக்கும்?\n"
+        "Spoken Tamil / Tanglish conversational interview style:\n"
+        "- வணக்கம்! Interview கு join பண்ணதுக்கு ரொம்ப நன்றி. நாம முதல் கேள்விக்கு போகலாமா?\n"
+        "- Super! உங்க previous project ல பண்ண architecture decision பத்தி கொஞ்சம் explain பண்ணுங்க.\n"
     ),
     "Hindi": (
-        "Daffy's natural Hinglish style — short, warm, colloquial:\n"
-        "- Bilkul samajh gaya! Din mein roughly kitne calls aate hain?\n"
-        "- Raat ke calls miss ho jaate hain? Hamara AI agent 24/7 saare calls attend karta hai.\n"
+        "Spoken Hinglish conversational interview style:\n"
+        "- Namaste! Interview join karne ke liye shukriya. Kya hum start karein?\n"
+        "- Bohot badhiya. Apne past project ke architecture aur scaling challenges ke baare mein batayein.\n"
     ),
     "English": (
-        "Daffy's natural English style — warm, casual, NOT robotic:\n"
-        "- Oh gotcha! And roughly how many calls do you get in a day?\n"
-        "- Got it — so after-hours calls just go unanswered? Our AI agent attends every single call, 24/7.\n"
+        "Professional yet warm, conversational technical interviewer style:\n"
+        "- Hello! Thank you so much for joining today's interview. Are you ready to begin?\n"
+        "- That's a great example. Could you walk me through the trade-offs you considered when choosing that architecture?\n"
     ),
     "Telugu": (
-        "Daffy's natural spoken Telugu style (Telugu script + everyday English words, exactly how people talk):\n"
-        "- సరే sir! మీ business కి daily ఎన్ని calls వస్తాయి?\n"
-        "- ఓ అలాగా! Night లో వచ్చే calls అన్నీ miss అవుతున్నాయా? మా AI agent 24/7 అన్ని calls attend చేస్తుంది.\n"
+        "Spoken Telugu conversational interview style:\n"
+        "- నమస్కారం! Interview కి join అయినందుకు ధన్యవాదాలు. Start చేద్దామా?\n"
     ),
     "Kannada": (
-        "Daffy's natural spoken Kannada style (Kannada script + everyday English words, exactly how people talk):\n"
-        "- ಸರಿ sir! ನಿಮ್ಮ business ಗೆ daily ಎಷ್ಟು calls ಬರುತ್ತವೆ?\n"
-        "- ಓ ಹೌದಾ! Night ಲಿ ಬರುವ calls ಎಲ್ಲಾ miss ಆಗ್ತಿವೆಯಾ? ನಮ್ಮ AI agent 24/7 ಎಲ್ಲಾ calls attend ಮಾಡುತ್ತೆ.\n"
+        "Spoken Kannada conversational interview style:\n"
+        "- ನಮಸ್ಕಾರ! Interview ಗೆ join ಆಗಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದಗಳು. Start ಮಾಡೋಣವಾ?\n"
     ),
     "Malayalam": (
-        "Daffy's natural spoken Malayalam style (Malayalam script + everyday English words, exactly how people talk):\n"
-        "- ശരി sir! നിങ്ങളുടെ business ൽ daily എത്ര calls വരും?\n"
-        "- ഓ അങ്ങനെയാണോ! Night ൽ വരുന്ന calls എല്ലാം miss ആകുന്നുണ്ടോ? ഞങ്ങളുടെ AI agent 24/7 എല്ലാ calls ഉം attend ചെയ്യും.\n"
+        "Spoken Malayalam conversational interview style:\n"
+        "- നമസ്കാരം! Interview ൽ പങ്കെടുത്തതിന് വളരെ നന്ദി. നമുക്ക് ആരംഭിക്കാം?\n"
     ),
 }
 
@@ -88,30 +86,30 @@ IDLE_NUDGE_MSGS = {
     "hi-IN": "हेलो, क्या आप सुन रहे हैं?",
     "te-IN": "హలో, వింటున్నారా?",
     "kn-IN": "ಹಲೋ, ಕೇಳಿಸ್ತಿದೆಯಾ?",
-    "ml-IN": "ഹലോ, കേൾക്കുന്നുണ്ടോ?",
+    "ml-IN": "ಹಲೋ, കേൾക്കുന്നുണ്ടോ?",
 }
 
 IDLE_GOODBYE_MSGS = {
-    "en-IN": "Seems like this isn't a good time. I'll call back later. Thank you, bye!",
-    "ta-IN": "நீங்க பிசியா இருக்கீங்க போல. நான் அப்புறமா கால் பண்றேன். நன்றி, வணக்கம்!",
-    "hi-IN": "लगता है आप अभी व्यस्त हैं। मैं बाद में कॉल करती हूँ। धन्यवाद, नमस्ते!",
-    "te-IN": "మీరు బిజీగా ఉన్నట్టున్నారు. నేను తర్వాత కాల్ చేస్తాను. ధన్యవాదాలు!",
-    "kn-IN": "ನೀವು ಬ್ಯುಸಿ ಇದ್ದೀರಾ ಅನ್ಸುತ್ತೆ. ನಾನು ಆಮೇಲೆ ಕಾಲ್ ಮಾಡ್ತೀನಿ. ಧನ್ಯವಾದಗಳು!",
-    "ml-IN": "നിങ്ങൾ തിരക്കിലാണെന്ന് തോന്നുന്നു. ഞാൻ പിന്നീട് വിളിക്കാം. നന്ദി!",
+    "en-IN": "Seems like you might be having audio issues. We'll reschedule this interview. Thank you!",
+    "ta-IN": "ஆடியோ பிரச்சனை இருக்கு போல. நாம அப்புறமா reschedule பண்ணிக்கலாம். நன்றி!",
+    "hi-IN": "लगता है ऑडियो में कोई समस्या है। हम बाद में reschedule करेंगे। धन्यवाद!",
+    "te-IN": "ఆడియో సమస్య ఉన్నట్టుంది. తర్వాత reschedule చేద్దాం. ధన్యవాదాలు!",
+    "kn-IN": "ಆಡಿಯೋ ಸಮಸ್ಯೆ ಇದೆ ಅನ್ಸುತ್ತೆ. ನಾವು ಆಮೇಲೆ reschedule ಮಾಡೋಣ. ಧನ್ಯವಾದಗಳು!",
+    "ml-IN": "ഓഡിയോ പ്രശ്നമുണ്ടെന്ന് തോന്നുന്നു. നമുക്ക് പിന്നീട് റീഷെഡ്യൂൾ ചെയ്യാം. നന്ദി!",
 }
 
 TIMEUP_GOODBYE_MSGS = {
-    "en-IN": "I don't want to take more of your time. Our team will follow up with the details. Thanks a lot, bye!",
-    "ta-IN": "உங்க நேரத்தை அதிகமா எடுத்துக்க விரும்பல. மீதி விவரங்களை எங்க டீம் ஷேர் பண்ணும். ரொம்ப நன்றி, வணக்கம்!",
-    "hi-IN": "मैं आपका ज़्यादा समय नहीं लेना चाहती। बाकी जानकारी हमारी टीम भेज देगी। धन्यवाद, नमस्ते!",
-    "te-IN": "మీ సమయం ఎక్కువ తీసుకోవడం ఇష్టం లేదు. మిగతా వివరాలు మా టీమ్ పంపుతుంది. ధన్యవాదాలు!",
-    "kn-IN": "ನಿಮ್ಮ ಹೆಚ್ಚು ಸಮಯ ತೆಗೆದುಕೊಳ್ಳಲು ಇಷ್ಟವಿಲ್ಲ. ಉಳಿದ ವಿವರಗಳನ್ನು ನಮ್ಮ ತಂಡ ಕಳುಹಿಸುತ್ತದೆ. ಧನ್ಯವಾದಗಳು!",
-    "ml-IN": "നിങ്ങളുടെ കൂടുതൽ സമയം എടുക്കാൻ ആഗ്രഹിക്കുന്നില്ല. ബാക്കി വിവരങ്ങൾ ഞങ്ങളുടെ ടീം അയയ്ക്കും. നന്ദി!",
+    "en-IN": "That concludes our allocated interview time today! Thank you so much for your insightful answers. Our hiring team will review everything and follow up soon. Have a great day!",
+    "ta-IN": "நமது இன்டர்வியூ நேரம் முடிவடைந்தது! உங்கள் பதில்களுக்கு மிக்க நன்றி. எங்கள் அணி விரைவில் தொடர்புகொள்ளும். நன்றி, வணக்கம்!",
+    "hi-IN": "आज का इंटरव्यू समय यहीं समाप्त होता है। आपके उत्तरों के लिए बहुत धन्यवाद। हमारी हायरिंग टीम जल्द संपर्क करेगी। धन्यवाद!",
+    "te-IN": "ఇంటర్వ్యూ సమయం ముగిసింది! మీ సమాధానాలకు ధన్యవాదాలు. మా బృందం త్వరలో సంప్రదిస్తుంది!",
+    "kn-IN": "ಇಂಟರ್ವ್ಯೂ ಸಮಯ ಮುಗಿದಿದೆ! ನಿಮ್ಮ ವಿವರವಾದ ಉತ್ತರಗಳಿಗೆ ಧನ್ಯವಾದಗಳು. ನಮ್ಮ ತಂಡ ಶೀಘ್ರದಲ್ಲೇ ಸಂಪರ್ಕಿಸುತ್ತದೆ!",
+    "ml-IN": "ഇന്റർവ്യൂ സമയം അവസാനിച്ചു! പങ്കെടുത്തതിന് വളരെ നന്ദി. ഞങ്ങളുടെ ടീം ഉടൻ ബന്ധപ്പെടും!",
 }
 
 
 class PromptManager:
-    """Manages conversation prompts, multilingual scripts, and predefined dialog nudges."""
+    """Manages conversation prompts, multilingual scripts, and autonomous interview flow prompts."""
 
     def __init__(self, company_name: str = COMPANY_NAME, agent_name: str = AGENT_NAME):
         self.company_name = company_name
@@ -120,8 +118,7 @@ class PromptManager:
     def load_script_prompt(
         self, call_mode: str, lang_name: str, few_shot: str, base_dir: str | None = None
     ) -> str:
-        """Load the sales script for this call mode from prompts/ (or fallback Scripts/),
-        filling in {lang_name} and {few_shot} placeholders."""
+        """Load prompt template or provide standard interview prompt."""
         filename = "outbound_prompt.txt" if call_mode == "outbound" else "inbound_prompt.txt"
 
         if base_dir is None:
@@ -136,26 +133,65 @@ class PromptManager:
             with open(script_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
         except Exception as e:
-            logger.error(f"[SCRIPT] Failed to read {filename}: {e} — using minimal fallback prompt.")
+            logger.info(f"[SCRIPT] Reading {filename}: {e} — using standard interview prompt.")
             content = (
-                f"You are {self.agent_name}, a friendly human-sounding salesperson from {self.company_name} selling an"
-                " AI Calling Agent that attends business calls 24/7. Ask ONE short question at a time,"
-                " book a free demo, and append [END_CALL] with a [LEAD: status=...] tag in your final goodbye reply.\n"
+                f"You are {self.agent_name}, an expert AI Technical Interviewer from {self.company_name}. "
+                "Conduct a professional, warm, and thorough technical and behavioral interview. "
+                "Ask ONE question at a time. Listen carefully to the candidate's response. "
+                "If the response is brief, ask a quick probing follow-up; otherwise acknowledge warmly and proceed to the next question. "
+                "When all questions are answered or wrap-up is reached, politely conclude the interview and append [END_CALL].\n"
                 "{few_shot}\nReply ONLY in {lang_name}. MAX 1-2 short sentences."
             )
         return content.replace("{lang_name}", lang_name).replace("{few_shot}", few_shot)
 
+    def build_candidate_interview_prompt(
+        self,
+        candidate_name: str,
+        position: str,
+        questions: List[Dict[str, Any]],
+        lang_name: str = "English",
+    ) -> str:
+        """Constructs an autonomous interview prompt incorporating candidate questions."""
+        q_lines = []
+        for q in questions:
+            order = q.get("order", 1)
+            cat = q.get("category", "technical").upper()
+            comp = q.get("competency", "")
+            text = q.get("text", "")
+            q_lines.append(f"{order}. [{cat} - {comp}]: {text}")
+
+        questions_block = "\n".join(q_lines)
+
+        return (
+            f"You are {self.agent_name}, a friendly, senior AI Technical Interviewer at {self.company_name}.\n"
+            f"You are currently conducting an official voice interview with candidate: {candidate_name} for the position: '{position}'.\n\n"
+            "INTERVIEW QUESTIONS ROADMAP:\n"
+            f"{questions_block}\n\n"
+            "CORE INTERVIEW RULES:\n"
+            "1. You must ask ONE question at a time. Never ask multiple questions in a single reply.\n"
+            "2. Listen actively to what the candidate says. If they answer well, give brief encouraging acknowledgement ('Great point', 'Understood', 'That makes sense') and ask the next question in the roadmap.\n"
+            "3. If their answer is very short or vague, ask a single crisp follow-up to probe their depth before moving on.\n"
+            "4. Keep your spoken responses CONCISE (1 to 2 sentences max) so the candidate speaks 80% of the time.\n"
+            "5. After all questions have been addressed or the candidate wishes to conclude, warmly thank them for their time, explain that hiring team will follow up, and append [END_CALL].\n"
+            f"6. Reply in {lang_name}."
+        )
+
     def get_few_shot(self, lang_name: str) -> str:
         return FEW_SHOT.get(lang_name, FEW_SHOT["English"])
 
-    def get_greeting(self, call_mode: str) -> str:
-        if call_mode == "outbound":
-            return (
-                f"Hello! I'm {self.agent_name.capitalize()}, calling from {self.company_name}. "
-                "We help businesses attend every customer call 24/7 with our AI calling agent. "
-                "May I know who I'm speaking with?"
-            )
-        return f"Hello! Thanks for calling {self.company_name}, I'm {self.agent_name.capitalize()}. How can I help you today?"
+    def get_greeting(
+        self,
+        call_mode: str = "interview",
+        candidate_name: str | None = None,
+        position: str | None = None,
+    ) -> str:
+        c_name = candidate_name or "there"
+        pos = position or "the position"
+        return (
+            f"Hello {c_name}! I'm {self.agent_name}, your AI interviewer from {self.company_name} for {pos}. "
+            "Thank you for joining today's interview session! We'll go through a few behavioral and technical questions. "
+            "Are you ready to begin?"
+        )
 
     def get_fallback_message(self, lang_code: str) -> str:
         return FALLBACK_MSGS.get(lang_code, FALLBACK_MSGS["en-IN"])

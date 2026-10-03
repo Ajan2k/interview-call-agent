@@ -8,7 +8,12 @@ router = APIRouter(prefix="/voice-config", tags=["Voice Config"])
 voice_config_db: Dict[str, Any] = {
     "speechMode": "Natural Female Voice (Azure Neerja / Pallavi)",
     "languageFocus": "Automatic Multi-language (Tamil, Hindi, English)",
-    "promptTemplate": "You are Daffy, a warm AI Sales Consultant calling from Daffytel Technologies...",
+    "promptTemplate": (
+        "You are Alex, an intelligent, empathetic, and professional AI Technical Recruiter and Interviewer.\n"
+        "Your objective is to conduct an interactive preliminary screening interview with the candidate.\n"
+        "You will ask 5 behavioral questions and up to 10 personalized technical questions tailored to their resume and the job requirements.\n"
+        "Be encouraging, listen carefully to their answers, ask natural follow-ups if needed, and maintain a concise conversational pace."
+    ),
 }
 
 

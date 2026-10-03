@@ -1,29 +1,29 @@
 import { useState, useEffect, type ReactNode } from "react";
 import {
-  Phone, PhoneIncoming, PhoneOutgoing, CalendarCheck,
-  Flame, Clock, PhoneForwarded, ThermometerSun,
+  Users,
+  CheckCircle,
+  Clock,
+  Sparkles,
+  TrendingUp,
+  Award,
+  AlertCircle,
+  ThumbsUp,
 } from "lucide-react";
+import { Candidate } from "../types";
 
-interface Summary {
-  total: number;
-  incoming: number;
-  outgoing: number;
-  hot: number;
-  warm: number;
-  cold: number;
-  incomplete: number;
-  demos_booked: number;
-  total_duration_sec: number;
-  avg_duration_sec: number;
-}
-
-function fmtDur(sec: number) {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}m ${s}s`;
-}
-
-function Card({ icon, label, value, sub, accent }: { icon: ReactNode; label: string; value: string | number; sub?: string; accent: string }) {
+function Card({
+  icon,
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent: string;
+}) {
   return (
     <div className="bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg border border-white/40 h-[120px] flex flex-col justify-between hover:shadow-xl transition-shadow">
       <div className="flex items-center justify-between">
@@ -39,18 +39,13 @@ function Card({ icon, label, value, sub, accent }: { icon: ReactNode; label: str
 }
 
 export const Metrics = () => {
-  const [s, setS] = useState<Summary | null>(null);
-  const [pendingCallbacks, setPendingCallbacks] = useState(0);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
 
   useEffect(() => {
     const fetchData = () => {
-      fetch("/api/report")
+      fetch("/api/candidates")
         .then((r) => r.json())
-        .then((d) => d.summary && setS(d.summary))
-        .catch(() => {});
-      fetch("/api/callbacks")
-        .then((r) => r.json())
-        .then((d) => Array.isArray(d) && setPendingCallbacks(d.filter((c: any) => !c.done).length))
+        .then((d) => Array.isArray(d) && setCandidates(d))
         .catch(() => {});
     };
     fetchData();
@@ -58,28 +53,88 @@ export const Metrics = () => {
     return () => clearInterval(iv);
   }, []);
 
-  const v = s || { total: 0, incoming: 0, outgoing: 0, hot: 0, warm: 0, cold: 0, incomplete: 0, demos_booked: 0, total_duration_sec: 0, avg_duration_sec: 0 };
+  const total = candidates.length;
+  const evaluated = candidates.filter((c) => c.status === "evaluated" || c.scorecard);
+  const hireCount = evaluated.filter((c) => c.scorecard?.recommendation?.toLowerCase().includes("hire")).length;
+  const considerCount = evaluated.filter((c) => c.scorecard?.recommendation?.toLowerCase().includes("consider")).length;
+  const inProgress = candidates.filter((c) => c.status === "in_progress").length;
+
+  const avgOverallScore =
+    evaluated.length > 0
+      ? Math.round(
+          evaluated.reduce((acc, c) => acc + (c.scorecard?.overall_score || 0), 0) / evaluated.length
+        )
+      : 0;
+
+  const avgTechScore =
+    evaluated.length > 0
+      ? Math.round(
+          evaluated.reduce((acc, c) => acc + (c.scorecard?.technical_score || 0), 0) / evaluated.length
+        )
+      : 0;
 
   return (
     <div className="w-full lg:w-4/5 xl:w-[72%] mt-8 pr-4 md:pr-8">
-      <h2 className="text-white font-bold text-sm mb-6 tracking-wide drop-shadow-md">Call Center Overview</h2>
+      <h2 className="text-white font-bold text-sm mb-6 tracking-wide drop-shadow-md">
+        AI Interview Pipeline Analytics
+      </h2>
       <div id="metrics-container" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-2">
-        <Card icon={<Phone className="w-4 h-4 text-white" />} accent="bg-slate-700"
-          label="Total Calls" value={v.total} sub="all AI conversations" />
-        <Card icon={<PhoneIncoming className="w-4 h-4 text-white" />} accent="bg-indigo-500"
-          label="Incoming Calls" value={v.incoming} sub="customers called in" />
-        <Card icon={<PhoneOutgoing className="w-4 h-4 text-white" />} accent="bg-purple-500"
-          label="Outgoing Calls" value={v.outgoing} sub="agent dialed out" />
-        <Card icon={<CalendarCheck className="w-4 h-4 text-white" />} accent="bg-emerald-500"
-          label="Demos Booked" value={v.demos_booked} sub="scheduled from calls" />
-        <Card icon={<Flame className="w-4 h-4 text-white" />} accent="bg-rose-500"
-          label="Hot Leads" value={v.hot} sub="very interested" />
-        <Card icon={<ThermometerSun className="w-4 h-4 text-white" />} accent="bg-amber-500"
-          label="Warm Leads" value={v.warm} sub="interested / callback" />
-        <Card icon={<PhoneForwarded className="w-4 h-4 text-white" />} accent="bg-orange-500"
-          label="Pending Callbacks" value={pendingCallbacks} sub="to call back later" />
-        <Card icon={<Clock className="w-4 h-4 text-white" />} accent="bg-sky-500"
-          label="Avg Call Duration" value={fmtDur(v.avg_duration_sec)} sub="per conversation" />
+        <Card
+          icon={<Users className="w-4 h-4 text-white" />}
+          accent="bg-indigo-600"
+          label="Total Candidates"
+          value={total}
+          sub="dossiers ingested"
+        />
+        <Card
+          icon={<CheckCircle className="w-4 h-4 text-white" />}
+          accent="bg-emerald-500"
+          label="Interviews Completed"
+          value={evaluated.length}
+          sub="scorecard generated"
+        />
+        <Card
+          icon={<ThumbsUp className="w-4 h-4 text-white" />}
+          accent="bg-blue-500"
+          label="Hire Recommendations"
+          value={hireCount}
+          sub="top qualified candidates"
+        />
+        <Card
+          icon={<AlertCircle className="w-4 h-4 text-white" />}
+          accent="bg-amber-500"
+          label="Under Consideration"
+          value={considerCount}
+          sub="further review advised"
+        />
+        <Card
+          icon={<Award className="w-4 h-4 text-white" />}
+          accent="bg-purple-600"
+          label="Avg Overall Score"
+          value={evaluated.length > 0 ? `${avgOverallScore}/100` : "N/A"}
+          sub="across all interviews"
+        />
+        <Card
+          icon={<TrendingUp className="w-4 h-4 text-white" />}
+          accent="bg-teal-500"
+          label="Avg Technical Rating"
+          value={evaluated.length > 0 ? `${avgTechScore}/100` : "N/A"}
+          sub="JD competency match"
+        />
+        <Card
+          icon={<Clock className="w-4 h-4 text-white" />}
+          accent="bg-rose-500"
+          label="In Progress / Queued"
+          value={inProgress}
+          sub="active screening calls"
+        />
+        <Card
+          icon={<Sparkles className="w-4 h-4 text-white" />}
+          accent="bg-indigo-800"
+          label="Autonomous Mode"
+          value="100%"
+          sub="resume + JD tailored"
+        />
       </div>
     </div>
   );

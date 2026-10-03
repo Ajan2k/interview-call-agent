@@ -11,12 +11,9 @@ from fastapi.testclient import TestClient
 import main
 from services import (
     db_manager,
-    contact_repo,
     call_repo,
-    meeting_repo,
-    callback_repo,
     voice_config_repo,
-    campaign_repo,
+    candidate_repo,
 )
 import services.translation_service
 
@@ -35,11 +32,7 @@ def _mock_db(monkeypatch):
     monkeypatch.setattr(db_manager, "init_db", lambda: None)
     monkeypatch.setattr(db_manager, "get_connection", lambda: None)
     monkeypatch.setattr(call_repo, "get_all", lambda *a, **k: None)
-    monkeypatch.setattr(meeting_repo, "get_all", lambda *a, **k: None)
-    monkeypatch.setattr(callback_repo, "get_all", lambda *a, **k: None)
-    monkeypatch.setattr(contact_repo, "get_all", lambda: [])
     monkeypatch.setattr(voice_config_repo, "get", lambda: None)
-    monkeypatch.setattr(campaign_repo, "get_all", lambda: [])
 
 
 class TestHealth:
@@ -52,7 +45,6 @@ class TestHealth:
         assert body["databaseType"] == "In-Memory (Fallback)"
 
     def test_health_reports_current_stack(self, client):
-        # Guardrail: health should advertise the real providers we wired up.
         services = client.get("/api/health").json()["services"]
         assert "Cartesia" in services["tts"]
         assert "8B" in services["llm"] or "8b" in services["llm"]
@@ -74,40 +66,42 @@ class TestVoiceConfig:
         assert r.json()["config"]["speed"] == 1.2
 
 
-class TestContacts:
-    def test_add_then_appears_in_list(self, client, monkeypatch):
-        monkeypatch.setattr(contact_repo, "save", lambda c: None)
-        # In-memory fallback list is used when contact_repo.get_all returns [].
-        r = client.post("/api/contacts", json={"name": "Asha", "phone": "+9199"})
+class TestCandidatesAPI:
+    def test_get_candidates_list(self, client):
+        r = client.get("/api/candidates")
         assert r.status_code == 200
-        created = r.json()
-        assert created["name"] == "Asha"
-        assert created["status"] == "Pending"       # default filled in
-        assert created["lastCalled"] == "Never"
-        assert "id" in created
+        assert isinstance(r.json(), list)
+        assert "X-Total-Count" in r.headers
+        assert r.headers["X-Limit"] == "50"
+        assert r.headers["X-Offset"] == "0"
 
-    def test_update_missing_contact_404(self, client):
-        r = client.put("/api/contacts/does-not-exist", json={"name": "x"})
+    def test_get_candidates_pagination_params(self, client):
+        r = client.get("/api/candidates?limit=10&offset=5")
+        assert r.status_code == 200
+        assert r.headers["X-Limit"] == "10"
+        assert r.headers["X-Offset"] == "5"
+
+    def test_get_behavioral_defaults(self, client):
+        r = client.get("/api/candidates/behavioral-defaults")
+        assert r.status_code == 200
+        data = r.json()
+        assert "questions" in data
+        assert len(data["questions"]) == 5
+
+    def test_get_nonexistent_candidate_404(self, client):
+        r = client.get("/api/candidates/nonexistent-id-999")
         assert r.status_code == 404
 
 
-class TestHistoryAndMeetings:
+class TestCallHistory:
     def test_call_history_falls_back_to_jsonl(self, client, monkeypatch):
-        # call_repo.get_all returns None -> route reads the JSONL file (may be empty).
         r = client.get("/api/call-history")
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
-    def test_meetings_from_db(self, client, monkeypatch):
-        monkeypatch.setattr(meeting_repo, "get_all", lambda *a, **k: [{"details": "Mon 3pm"}])
-        r = client.get("/api/meetings")
-        assert r.status_code == 200
-        assert r.json() == [{"details": "Mon 3pm"}]
-
-    def test_transcript_db_unavailable_503(self, client, monkeypatch):
-        monkeypatch.setattr(call_repo, "get_transcript", lambda cid: None)
-        r = client.get("/api/call-history/abc/transcript")
-        assert r.status_code == 503
+    def test_recordings_missing_file_404(self, client):
+        r = client.get("/api/recordings/nonexistent.wav")
+        assert r.status_code == 404
 
 
 class TestTranslate:
@@ -146,17 +140,3 @@ class TestTranslate:
             "text": "வணக்கம்", "source_language_code": "ta-IN", "target_language_code": "en-IN",
         })
         assert r.json()["translated"] == "Hello"
-
-
-class TestCallbacks:
-    def test_add_callback(self, client, monkeypatch):
-        monkeypatch.setattr(callback_repo, "save", lambda rec: True)
-        r = client.post("/api/callbacks", json={"phone": "+9199", "callback_time": "tomorrow"})
-        assert r.status_code == 200
-        assert r.json()["success"] is True
-        assert r.json()["callback"]["callback_time"] == "tomorrow"
-
-    def test_mark_done(self, client, monkeypatch):
-        monkeypatch.setattr(callback_repo, "mark_done", lambda cid, done: True)
-        r = client.post("/api/callbacks/5/done", json={"done": True})
-        assert r.json()["success"] is True

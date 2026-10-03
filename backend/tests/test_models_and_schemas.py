@@ -1,12 +1,9 @@
-"""Unit tests for models and schemas."""
+"""Unit tests for interview agent models and schemas."""
 import pytest
-from models.contact import Contact
-from models.campaign import Campaign
 from models.call import Call
-from models.meeting import Meeting
-from models.callback import Callback
 from models.voice_config import VoiceConfig
-from schemas.contact import ContactCreateSchema, ContactResponseSchema
+from models.candidate import Candidate, Question, Scorecard
+from schemas.candidate import CandidateCreate, CandidateResponse, QuestionSchema, ScorecardSchema
 from schemas.translate import TranslateRequestSchema, TranslateResponseSchema
 from schemas.health import HealthResponseSchema
 
@@ -14,59 +11,78 @@ pytestmark = pytest.mark.unit
 
 
 class TestDomainModels:
-    def test_contact_serialization(self):
-        c = Contact(
-            id="1",
-            name="John Doe",
-            phone="+919876543210",
-            status="Pending",
-            last_called="Never",
-            notes="Follow up",
-            is_incoming=True,
+    def test_candidate_and_question_serialization(self):
+        q = Question(
+            id="q1",
+            category="behavioral",
+            text="Tell me about a time you handled a tight deadline.",
+            competency="time management",
         )
-        d = c.to_dict()
-        assert d["id"] == "1"
-        assert d["name"] == "John Doe"
-        assert d["isIncoming"] is True
-        assert d["lastCalled"] == "Never"
+        cand = Candidate(
+            id="cand-1",
+            name="Alice Smith",
+            phone="+919876543210",
+            position="Senior Backend Engineer",
+            job_description="Seeking a FastAPI and PostgreSQL expert.",
+            resume_text="5 years experience in building high concurrency systems.",
+            questions=[q],
+            status="questions_ready",
+        )
+        d = cand.to_dict()
+        assert d["id"] == "cand-1"
+        assert d["name"] == "Alice Smith"
+        assert len(d["questions"]) == 1
+        assert d["questions"][0]["category"] == "behavioral"
 
-        restored = Contact.from_dict(d)
-        assert restored.id == c.id
-        assert restored.name == c.name
-        assert restored.is_incoming is True
+        restored = Candidate.from_dict(d)
+        assert restored.id == cand.id
+        assert restored.name == cand.name
+        assert len(restored.questions) == 1
+        assert restored.questions[0].text == q.text
 
-    def test_campaign_serialization(self):
-        camp = Campaign(id="camp-1", name="Outbound Tech", status="Active", contacts_count=42, date="Today")
-        d = camp.to_dict()
-        assert d["id"] == "camp-1"
-        assert d["contacts_count"] == 42
-        restored = Campaign.from_dict(d)
-        assert restored.name == camp.name
+    def test_scorecard_serialization(self):
+        sc = Scorecard(
+            overall_score=85,
+            technical_score=90,
+            behavioral_score=80,
+            communication_score=85,
+            recommendation="Hire",
+            strengths=["Strong FastAPI knowledge", "Clear communication"],
+            areas_for_improvement=["Could deepen distributed systems insight"],
+            summary="Candidate demonstrated solid architecture skills.",
+        )
+        d = sc.to_dict()
+        assert d["overall_score"] == 85
+        assert d["recommendation"] == "Hire"
+        assert len(d["strengths"]) == 2
 
-    def test_call_lead_status_resolution(self):
-        c1 = Call(id="call-1", direction="outgoing", phone="+919876", lead="status=HOT | very interested")
-        assert c1.resolved_lead_status() == "HOT"
+        restored = Scorecard.from_dict(d)
+        assert restored.overall_score == sc.overall_score
+        assert restored.recommendation == sc.recommendation
 
-        c2 = Call(id="call-2", direction="incoming", phone="+919876", lead_status="cold")
-        assert c2.resolved_lead_status() == "COLD"
-
-    def test_meeting_and_callback_models(self):
-        m = Meeting(time="2026-10-03 18:00:00", call_id="c-1", direction="incoming", phone="+91", language="Tamil", details="Demo Friday")
-        assert m.to_dict()["call_id"] == "c-1"
-
-        cb = Callback(time="2026-10-03 18:00:00", call_id="c-2", direction="outgoing", phone="+91", language="English", callback_time="Tomorrow 10am")
-        assert cb.to_dict()["done"] is False
-        cb.done = True
-        assert cb.to_dict()["done"] is True
+    def test_voice_config_model(self):
+        vc = VoiceConfig(
+            speech_mode="Natural Female Voice",
+            language_focus="English",
+            prompt_template="You are Alex, an AI interviewer.",
+        )
+        d = vc.to_dict()
+        assert d["speechMode"] == "Natural Female Voice"
+        restored = VoiceConfig.from_dict(d)
+        assert restored.speech_mode == "Natural Female Voice"
 
 
 class TestSchemas:
-    def test_contact_create_schema(self):
-        data = {"name": "Asha", "phone": "+919999999999", "notes": "VIP client"}
-        schema = ContactCreateSchema(**data)
-        assert schema.name == "Asha"
-        assert schema.status == "Pending"
-        assert schema.lastCalled == "Never"
+    def test_candidate_create_schema(self):
+        data = {
+            "name": "Jane Developer",
+            "phone": "+919999999999",
+            "position": "Frontend Lead",
+            "job_description": "React 19 & TypeScript expert",
+        }
+        schema = CandidateCreate(**data)
+        assert schema.name == "Jane Developer"
+        assert schema.position == "Frontend Lead"
 
     def test_translate_schema(self):
         req = TranslateRequestSchema(text="Hello world")
@@ -94,7 +110,5 @@ class TestCoreConfig:
         assert isinstance(custom_settings.POSTGRES_PASSWORD, SecretStr)
         assert custom_settings.POSTGRES_PASSWORD.get_secret_value() == "mypassword"
         assert custom_settings.postgres_dsn == "postgresql://myuser:mypassword@127.0.0.1:5433/mydb"
-        # Test paths default_factory
         assert custom_settings.BACKEND_DIR.exists()
         assert custom_settings.LOGS_DIR.name == "logs"
-

@@ -2,6 +2,7 @@ import os
 import logging
 import httpx
 from groq import AsyncGroq
+from core.config import settings
 from services.voice.prompts import (
     WHISPER_LANG_MAP,
     SUPPORTED_LANGS,
@@ -11,7 +12,7 @@ from services.voice.prompts import (
 
 logger = logging.getLogger("voice.stt")
 
-SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_STT_URL = settings.SARVAM_STT_URL
 
 
 class STTService:
@@ -32,7 +33,7 @@ class STTService:
     async def transcribe_sarvam(self, wav_data: bytes, sarvam_key: str) -> tuple[str | None, str | None]:
         """Transcribe using Indic-specialised Sarvam Saarika."""
         try:
-            stt_model = os.getenv("SARVAM_STT_MODEL", "saarika:v2.5")
+            stt_model = settings.get_sarvam_stt_model()
             logger.info(f"[ASR] Sending {len(wav_data)} bytes of WAV to Sarvam {stt_model}.")
             async with httpx.AsyncClient() as client:
                 res = await client.post(

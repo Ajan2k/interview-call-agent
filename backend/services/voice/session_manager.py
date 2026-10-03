@@ -8,6 +8,7 @@ import audioop
 import logging
 from fastapi import WebSocket, WebSocketDisconnect
 from core.logging import get_conversation_logger
+from core.config import settings
 from services import database_manager as db
 from services.voice.audio import AudioProcessor, CallRecorder
 from services.voice.markers import MarkerService
@@ -15,6 +16,7 @@ from services.voice.prompts import PromptManager, LANG_MAP
 from services.voice.tts import TTSService
 from services.voice.stt import STTService
 from services.voice.llm import LLMService
+from services.candidate_repository import candidate_repo
 
 logger = logging.getLogger("voice.session")
 convo_logger = get_conversation_logger()
@@ -25,7 +27,7 @@ MIN_SPEECH_DURATION_MS = 300
 SILENCE_DURATION_MS = 1000
 BARGE_IN_THRESHOLD = 3200
 IDLE_TIMEOUT_SECS = 10
-MAX_CALL_DURATION_SECS = int(os.getenv("MAX_CALL_DURATION_SECS", "300"))
+MAX_CALL_DURATION_SECS = settings.MAX_CALL_DURATION_SECS
 
 
 class VoiceSessionManager:
@@ -105,9 +107,15 @@ class VoiceSessionManager:
         except Exception:
             pass
 
-    async def play_greeting(self, websocket: WebSocket, session_state: dict) -> None:
-        call_mode = session_state.get("call_mode", "outbound")
-        text = self.prompt_manager.get_greeting(call_mode)
+    async def play_greeting(
+        self,
+        websocket: WebSocket,
+        session_state: dict,
+        candidate_name: str | None = None,
+        position: str | None = None,
+    ) -> None:
+        call_mode = session_state.get("call_mode", "interview")
+        text = self.prompt_manager.get_greeting(call_mode, candidate_name=candidate_name, position=position)
         lang = "en-IN"
         session_state["language_code"] = lang
         session_state["history"] = [{"role": "assistant", "content": text}]
@@ -127,11 +135,11 @@ class VoiceSessionManager:
             logger.info("[PIPELINE] Call is ending — dropping late utterance.")
             return
 
-        sarvam_key = os.getenv("SARVAM_API_KEY")
-        groq_key = os.getenv("GROQ_API_KEY")
+        sarvam_key = settings.get_sarvam_api_key()
+        groq_key = settings.get_groq_api_key()
 
         if not groq_key and not sarvam_key:
-            logger.error("[PIPELINE] Missing both SARVAM_API_KEY and GROQ_API_KEY in environment.")
+            logger.error("[PIPELINE] Missing both SARVAM_API_KEY and GROQ_API_KEY in environment or settings.")
             return
 
         try:
@@ -178,11 +186,20 @@ class VoiceSessionManager:
             client, model_name, max_tokens, provider = self.llm_service.get_client_and_model()
             lang_name = LANG_MAP.get(current_lang, "English")
             few_shot = self.prompt_manager.get_few_shot(lang_name)
-            call_mode = session_state.get("call_mode", "outbound")
+            call_mode = session_state.get("call_mode", "interview")
 
-            system_prompt_text = self.prompt_manager.load_script_prompt(
-                call_mode, lang_name, few_shot, base_dir=script_dir
-            )
+            candidate = session_state.get("candidate")
+            if candidate:
+                system_prompt_text = self.prompt_manager.build_candidate_interview_prompt(
+                    candidate_name=candidate.name,
+                    position=candidate.position,
+                    questions=[q.to_dict() if hasattr(q, "to_dict") else q for q in candidate.questions],
+                    lang_name=lang_name,
+                )
+            else:
+                system_prompt_text = self.prompt_manager.load_script_prompt(
+                    call_mode, lang_name, few_shot, base_dir=script_dir
+                )
             logger.info(f"[LLM PROMPT] lang={current_lang} | model={model_name}")
 
             history = self.llm_service.update_history(session_state, transcript, system_prompt_text)
@@ -343,19 +360,38 @@ class VoiceSessionManager:
                 event = msg.get("event")
 
                 if event == "start":
-                    mode = msg.get("callMode") or msg.get("mode") or "outbound"
+                    mode = msg.get("callMode") or msg.get("mode") or "interview"
+                    candidate_id = msg.get("candidate_id") or msg.get("candidateId")
                     session_state["call_mode"] = mode
                     session_state["phone"] = (msg.get("phone") or "").strip()
                     session_state["call_start"] = time.time()
                     session_state["last_activity"] = time.time()
                     call_id = (
                         time.strftime("%Y%m%d_%H%M%S")
-                        + ("_incoming" if mode == "inbound" else "_outgoing")
+                        + ("_incoming" if mode == "inbound" else "_interview")
                     )
                     session_state["call_id"] = call_id
                     session_state["recorder"] = CallRecorder(call_id)
-                    logger.info(f"[TELEFORCE WSS] Received 'start' (mode={mode}, id={call_id}). Playing greeting...")
-                    await self.play_greeting(websocket, session_state)
+
+                    cand = None
+                    if candidate_id:
+                        cand = candidate_repo.get_by_id(candidate_id)
+                    elif session_state["phone"]:
+                        for c in candidate_repo.get_all():
+                            if c.phone and (session_state["phone"] in c.phone or c.phone in session_state["phone"]):
+                                cand = c
+                                break
+
+                    if cand:
+                        session_state["candidate"] = cand
+                        cand.status = "in_progress"
+                        cand.call_id = call_id
+                        candidate_repo.save(cand)
+                        logger.info(f"[INTERVIEW WSS] Starting interview for {cand.name} (id={cand.id}). Playing greeting...")
+                        await self.play_greeting(websocket, session_state, candidate_name=cand.name, position=cand.position)
+                    else:
+                        logger.info(f"[INTERVIEW WSS] Received 'start' (mode={mode}, id={call_id}). Playing greeting...")
+                        await self.play_greeting(websocket, session_state)
 
                 elif event == "media":
                     audio_b64 = msg["media"]["payload"]
@@ -513,6 +549,32 @@ class VoiceSessionManager:
                 except Exception as e:
                     logger.error(f"[CALL HISTORY] Failed to save call record: {e}")
 
+            # Candidate Interview Post-Processing
+            cand = session_state.get("candidate")
+            if cand:
+                cand.status = "completed"
+                cand.call_id = session_state.get("call_id")
+                candidate_repo.save(cand)
+                # Asynchronously generate scorecard evaluation from transcript
+                asyncio.create_task(
+                    self._evaluate_candidate_session(cand, session_state.get("transcript", []))
+                )
+
             convo_logger.info("===== CALL ENDED =====")
             if playback_task:
                 playback_task.cancel()
+
+    async def _evaluate_candidate_session(self, candidate, transcript: list) -> None:
+        try:
+            from services.interview_service import interview_service
+            logger.info(f"[INTERVIEW SESSION] Running automated scorecard evaluation for {candidate.name}...")
+            scorecard = await interview_service.evaluate_interview(candidate, transcript)
+            candidate.scorecard = scorecard
+            candidate.status = "evaluated"
+            candidate_repo.save(candidate)
+            logger.info(
+                f"[INTERVIEW SESSION] Scorecard evaluated for {candidate.name}: "
+                f"{scorecard.recommendation} (Score: {scorecard.overall_score}/100)"
+            )
+        except Exception as e:
+            logger.error(f"[INTERVIEW SESSION] Failed post-interview evaluation for {candidate.name}: {e}")

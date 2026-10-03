@@ -48,8 +48,14 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "skyagent"
     DATABASE_URL: Optional[PostgresDsn] = None
 
-    # LLM Settings
+    # LLM Settings & Provider Base URLs
     LLM_PROVIDER: str = "groq"
+    SARVAM_LLM_BASE_URL: str = "https://api.sarvam.ai/v1"
+    CEREBRAS_LLM_BASE_URL: str = "https://api.cerebras.ai/v1"
+    GEMINI_LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    TOGETHER_LLM_BASE_URL: str = "https://api.together.xyz/v1"
+    FALLBACK_MODEL: str = "llama-3.1-8b-instant"
+
     GROQ_API_KEY: Optional[SecretStr] = None
     GROQ_LLM_MODEL: str = "llama-3.1-8b-instant"
 
@@ -65,7 +71,12 @@ class Settings(BaseSettings):
     SARVAM_API_KEY: Optional[SecretStr] = None
     SARVAM_LLM_MODEL: str = "sarvam-30b"
 
-    # Speech Synthesis (TTS) & Recognition (STT)
+    # Speech Synthesis (TTS) & Recognition (STT) URLs & Configuration
+    SARVAM_TTS_URL: str = "https://api.sarvam.ai/text-to-speech"
+    SARVAM_TTS_SPEAKER: str = "anushka"
+    CARTESIA_TTS_URL: str = "https://api.cartesia.ai/tts/bytes"
+    CARTESIA_VERSION: str = "2024-11-13"
+
     CARTESIA_API_KEY: Optional[SecretStr] = None
     CARTESIA_MODEL_ID: str = "sonic-2"
     CARTESIA_KAVITHA_VOICE_ID: Optional[str] = None
@@ -75,6 +86,20 @@ class Settings(BaseSettings):
 
     AZURE_SPEECH_KEY: Optional[SecretStr] = None
     AZURE_SPEECH_REGION: str = "centralindia"
+    AZURE_TTS_URL_TEMPLATE: str = "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+
+    SARVAM_STT_URL: str = "https://api.sarvam.ai/speech-to-text"
+    SARVAM_STT_MODEL: str = "saarika:v2.5"
+
+    SARVAM_TRANSLATE_URL: str = "https://api.sarvam.ai/translate"
+
+    # Audio Recording Retention
+    AUDIO_RETENTION_MAX_DAYS: int = 30
+    AUDIO_RETENTION_MAX_STORAGE_MB: float = 5000.0
+
+    # Branding & Agent Persona
+    COMPANY_NAME: str = "TalentAI Recruiting"
+    AGENT_NAME: str = "Alex"
 
     # Call Lifecycle
     MAX_CALL_DURATION_SECS: int = 300
@@ -87,6 +112,75 @@ class Settings(BaseSettings):
             return str(self.DATABASE_URL)
         pwd = self.POSTGRES_PASSWORD.get_secret_value() if self.POSTGRES_PASSWORD else ""
         return f"postgresql://{self.POSTGRES_USER}:{pwd}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    # Safe Key & Model Accessors (supporting dynamic runtime/test overrides)
+    def _get_key(self, env_name: str, secret_field: Optional[SecretStr]) -> str:
+        # In pytest runs, always respect monkeypatch delenv/setenv strictly
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            return os.getenv(env_name, "")
+        val = os.getenv(env_name)
+        if val is not None:
+            return val
+        return secret_field.get_secret_value() if secret_field else ""
+
+    def get_sarvam_api_key(self) -> str:
+        return self._get_key("SARVAM_API_KEY", self.SARVAM_API_KEY)
+
+    def get_groq_api_key(self) -> str:
+        return self._get_key("GROQ_API_KEY", self.GROQ_API_KEY)
+
+    def get_together_api_key(self) -> str:
+        return self._get_key("TOGETHER_API_KEY", self.TOGETHER_API_KEY)
+
+    def get_gemini_api_key(self) -> str:
+        return self._get_key("GEMINI_API_KEY", self.GEMINI_API_KEY)
+
+    def get_cerebras_api_key(self) -> str:
+        return self._get_key("CEREBRAS_API_KEY", self.CEREBRAS_API_KEY)
+
+    def get_cartesia_api_key(self) -> str:
+        return self._get_key("CARTESIA_API_KEY", self.CARTESIA_API_KEY)
+
+    def get_azure_speech_key(self) -> str:
+        return self._get_key("AZURE_SPEECH_KEY", self.AZURE_SPEECH_KEY)
+
+    def get_azure_speech_region(self) -> str:
+        return os.getenv("AZURE_SPEECH_REGION", self.AZURE_SPEECH_REGION)
+
+    def get_llm_provider(self) -> str:
+        return os.getenv("LLM_PROVIDER", self.LLM_PROVIDER).lower()
+
+    def get_groq_model(self) -> str:
+        return os.getenv("GROQ_LLM_MODEL", self.GROQ_LLM_MODEL)
+
+    def get_together_model(self) -> str:
+        return os.getenv("TOGETHER_LLM_MODEL", self.TOGETHER_LLM_MODEL)
+
+    def get_gemini_model(self) -> str:
+        return os.getenv("GEMINI_LLM_MODEL", self.GEMINI_LLM_MODEL)
+
+    def get_cerebras_model(self) -> str:
+        return os.getenv("CEREBRAS_LLM_MODEL", self.CEREBRAS_LLM_MODEL)
+
+    def get_sarvam_model(self) -> str:
+        return os.getenv("SARVAM_LLM_MODEL", self.SARVAM_LLM_MODEL)
+
+    def get_sarvam_stt_model(self) -> str:
+        return os.getenv("SARVAM_STT_MODEL", self.SARVAM_STT_MODEL)
+
+    def get_sarvam_tts_speaker(self) -> str:
+        return os.getenv("SARVAM_TTS_SPEAKER", self.SARVAM_TTS_SPEAKER)
+
+    def get_cartesia_model(self) -> str:
+        return os.getenv("CARTESIA_MODEL_ID", self.CARTESIA_MODEL_ID)
+
+    def get_cartesia_voice(self, lang: str) -> str:
+        voices = {
+            "ta-IN": os.getenv("CARTESIA_VOICE_TA", os.getenv("CARTESIA_KAVITHA_VOICE_ID", self.CARTESIA_VOICE_TA or self.CARTESIA_KAVITHA_VOICE_ID or "")),
+            "en-IN": os.getenv("CARTESIA_VOICE_EN", self.CARTESIA_VOICE_EN or ""),
+            "hi-IN": os.getenv("CARTESIA_VOICE_HI", self.CARTESIA_VOICE_HI or ""),
+        }
+        return voices.get(lang) or os.getenv("CARTESIA_KAVITHA_VOICE_ID", self.CARTESIA_KAVITHA_VOICE_ID or "")
 
 
 # Singleton instance

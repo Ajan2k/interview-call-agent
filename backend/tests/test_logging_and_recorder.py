@@ -136,3 +136,26 @@ class TestCallRecorder:
         expected_pad = int(0.5 * voice.CallRecorder.BYTES_PER_SEC)
         expected_pad -= expected_pad % 2
         assert len(rec.agent_track) == expected_pad + 20
+
+    def test_enforce_retention_policy_prunes_old_and_oversized(self, tmp_path):
+        import time
+        f1 = tmp_path / "old.wav"
+        f2 = tmp_path / "mid.wav"
+        f3 = tmp_path / "new.wav"
+        f1.write_bytes(b"0" * 1000)
+        f2.write_bytes(b"0" * 1000)
+        f3.write_bytes(b"0" * 1000)
+
+        # Set f1 modification time to 40 days ago
+        old_mtime = time.time() - (40 * 86400)
+        os.utime(str(f1), (old_mtime, old_mtime))
+
+        deleted = voice.CallRecorder.enforce_retention_policy(str(tmp_path), max_days=30, max_storage_mb=100)
+        assert deleted == 1
+        assert not f1.exists()
+        assert f2.exists()
+        assert f3.exists()
+
+        # Now test max_storage_mb trigger (0.001 MB is ~1048 bytes; f2+f3 = 2000 bytes)
+        deleted_size = voice.CallRecorder.enforce_retention_policy(str(tmp_path), max_days=30, max_storage_mb=0.001)
+        assert deleted_size >= 1

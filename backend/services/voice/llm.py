@@ -5,15 +5,16 @@ import logging
 from typing import Any
 from groq import AsyncGroq
 from openai import AsyncOpenAI
+from core.config import settings
 
 logger = logging.getLogger("voice.llm")
 
-SARVAM_LLM_BASE_URL = "https://api.sarvam.ai/v1"
-CEREBRAS_LLM_BASE_URL = "https://api.cerebras.ai/v1"
-GEMINI_LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-TOGETHER_LLM_BASE_URL = "https://api.together.xyz/v1"
+SARVAM_LLM_BASE_URL = settings.SARVAM_LLM_BASE_URL
+CEREBRAS_LLM_BASE_URL = settings.CEREBRAS_LLM_BASE_URL
+GEMINI_LLM_BASE_URL = settings.GEMINI_LLM_BASE_URL
+TOGETHER_LLM_BASE_URL = settings.TOGETHER_LLM_BASE_URL
 
-FALLBACK_MODEL = "llama-3.1-8b-instant"
+FALLBACK_MODEL = settings.FALLBACK_MODEL
 
 
 class LLMService:
@@ -24,32 +25,32 @@ class LLMService:
 
     def get_client_and_model(self) -> tuple[Any, str, int, str]:
         """Selects the active LLM client, model name, max tokens, and provider name."""
-        together_key = os.getenv("TOGETHER_API_KEY")
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        cerebras_key = os.getenv("CEREBRAS_API_KEY")
-        sarvam_key = os.getenv("SARVAM_API_KEY")
-        groq_key = os.getenv("GROQ_API_KEY")
-        llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()
+        together_key = settings.get_together_api_key()
+        gemini_key = settings.get_gemini_api_key()
+        cerebras_key = settings.get_cerebras_api_key()
+        sarvam_key = settings.get_sarvam_api_key()
+        groq_key = settings.get_groq_api_key()
+        llm_provider = settings.get_llm_provider()
 
         if llm_provider == "together" and together_key:
-            client = AsyncOpenAI(base_url=TOGETHER_LLM_BASE_URL, api_key=together_key, max_retries=0)
-            model_name = os.getenv("TOGETHER_LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
+            client = AsyncOpenAI(base_url=settings.TOGETHER_LLM_BASE_URL, api_key=together_key, max_retries=0)
+            model_name = settings.get_together_model()
             return client, model_name, 400, "together"
         elif llm_provider == "gemini" and gemini_key:
-            client = AsyncOpenAI(base_url=GEMINI_LLM_BASE_URL, api_key=gemini_key, max_retries=0)
-            model_name = os.getenv("GEMINI_LLM_MODEL", "gemini-flash-lite-latest")
+            client = AsyncOpenAI(base_url=settings.GEMINI_LLM_BASE_URL, api_key=gemini_key, max_retries=0)
+            model_name = settings.get_gemini_model()
             return client, model_name, 400, "gemini"
         elif llm_provider == "cerebras" and cerebras_key:
-            client = AsyncOpenAI(base_url=CEREBRAS_LLM_BASE_URL, api_key=cerebras_key, max_retries=0)
-            model_name = os.getenv("CEREBRAS_LLM_MODEL", "zai-glm-4.7")
+            client = AsyncOpenAI(base_url=settings.CEREBRAS_LLM_BASE_URL, api_key=cerebras_key, max_retries=0)
+            model_name = settings.get_cerebras_model()
             return client, model_name, 400, "cerebras"
         elif llm_provider == "sarvam" and sarvam_key:
-            client = AsyncOpenAI(base_url=SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
-            model_name = os.getenv("SARVAM_LLM_MODEL", "sarvam-30b")
+            client = AsyncOpenAI(base_url=settings.SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
+            model_name = settings.get_sarvam_model()
             return client, model_name, 1600, "sarvam"
         else:
             client = AsyncGroq(api_key=groq_key, max_retries=0)
-            model_name = os.getenv("GROQ_LLM_MODEL", "llama-3.1-8b-instant")
+            model_name = settings.get_groq_model()
             return client, model_name, 400, "groq"
 
     async def create_chat_stream(
@@ -61,8 +62,8 @@ class LLMService:
         provider: str,
     ) -> tuple[Any, str]:
         """Initiates the LLM completion stream with automatic multi-provider fallback."""
-        sarvam_key = os.getenv("SARVAM_API_KEY")
-        groq_key = os.getenv("GROQ_API_KEY")
+        sarvam_key = settings.get_sarvam_api_key()
+        groq_key = settings.get_groq_api_key()
 
         logger.info(f"[LLM] Calling model {model_name}...")
         try:
@@ -77,11 +78,11 @@ class LLMService:
         except Exception as llm_err:
             err_str = str(llm_err)
             if sarvam_key and provider != "sarvam":
-                fallback_sarvam_model = os.getenv("SARVAM_LLM_MODEL", "sarvam-30b")
+                fallback_sarvam_model = settings.get_sarvam_model()
                 logger.warning(
                     f"[LLM] Primary model error: {err_str}. Falling back to Sarvam {fallback_sarvam_model}..."
                 )
-                sarvam_client = AsyncOpenAI(base_url=SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
+                sarvam_client = AsyncOpenAI(base_url=settings.SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)
                 stream = await sarvam_client.chat.completions.create(
                     model=fallback_sarvam_model,
                     messages=messages,

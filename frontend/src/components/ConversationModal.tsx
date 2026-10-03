@@ -119,7 +119,7 @@ export function ConversationModal({ callId, phone, direction, onClose }: Convers
                 <div key={i} className={`flex ${isAgent ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 ${isAgent ? "bg-indigo-600 text-white rounded-br-sm" : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm"}`}>
                     <div className={`text-[9px] font-bold uppercase tracking-wide mb-0.5 ${isAgent ? "text-indigo-200" : "text-slate-400"}`}>
-                      {isAgent ? "Daffy (AI)" : "Customer"}
+                      {isAgent ? "Interviewer (AI)" : "Candidate"}
                     </div>
                     <div className="text-[13px] leading-snug whitespace-pre-wrap">
                       {showTranslation && translated[i] !== undefined ? translated[i] : t.text}

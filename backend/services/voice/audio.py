@@ -4,6 +4,7 @@ import wave
 import time
 import audioop
 import logging
+from core.config import settings
 
 logger = logging.getLogger("voice.audio")
 
@@ -85,9 +86,7 @@ class CallRecorder:
             agent = bytes(self.agent_track) + b"\x00" * (n - len(self.agent_track))
             mixed = audioop.add(caller, agent, 2)
 
-            target_dir = recordings_dir or os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "recordings"
-            )
+            target_dir = recordings_dir or str(settings.RECORDINGS_DIR)
             os.makedirs(target_dir, exist_ok=True)
             filename = f"{self.call_id}.wav"
             path = os.path.join(target_dir, filename)
@@ -97,7 +96,68 @@ class CallRecorder:
                 wf.setframerate(16000)
                 wf.writeframes(mixed)
             logger.info(f"[RECORDING] Saved {filename} ({len(mixed)} bytes, {len(mixed)/self.BYTES_PER_SEC:.1f}s)")
+            self.enforce_retention_policy(target_dir)
             return filename
         except Exception as e:
             logger.error(f"[RECORDING] Failed to save: {e}")
             return None
+
+    @staticmethod
+    def enforce_retention_policy(
+        recordings_dir: str,
+        max_days: int | None = None,
+        max_storage_mb: float | None = None,
+    ) -> int:
+        """Enforces audio recording retention policy: deletes recordings older than max_days
+        and prunes oldest files if total directory size exceeds max_storage_mb.
+        Returns the number of pruned files."""
+        max_days = max_days if max_days is not None else settings.AUDIO_RETENTION_MAX_DAYS
+        max_storage_mb = max_storage_mb if max_storage_mb is not None else settings.AUDIO_RETENTION_MAX_STORAGE_MB
+        deleted_count = 0
+        try:
+            if not os.path.exists(recordings_dir):
+                return 0
+            now = time.time()
+            max_age_sec = max_days * 86400
+
+            files = []
+            total_bytes = 0
+            for entry in os.scandir(recordings_dir):
+                if entry.is_file() and entry.name.endswith(".wav"):
+                    stat = entry.stat()
+                    files.append((entry.path, stat.st_mtime, stat.st_size))
+                    total_bytes += stat.st_size
+
+            # 1. Prune files older than max_days
+            remaining_files = []
+            for path, mtime, size in files:
+                if now - mtime > max_age_sec:
+                    try:
+                        os.remove(path)
+                        deleted_count += 1
+                        total_bytes -= size
+                        logger.info(f"[AUDIO RETENTION] Pruned expired recording: {os.path.basename(path)}")
+                    except Exception:
+                        remaining_files.append((path, mtime, size))
+                else:
+                    remaining_files.append((path, mtime, size))
+
+            # 2. Prune oldest files if total size exceeds max_storage_mb
+            max_bytes = max_storage_mb * 1024 * 1024
+            if total_bytes > max_bytes:
+                remaining_files.sort(key=lambda x: x[1])
+                for path, _, size in remaining_files:
+                    if total_bytes <= max_bytes:
+                        break
+                    try:
+                        os.remove(path)
+                        deleted_count += 1
+                        total_bytes -= size
+                        logger.info(f"[AUDIO RETENTION] Quota exceeded. Pruned oldest: {os.path.basename(path)}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"[AUDIO RETENTION] Error enforcing retention: {e}")
+
+        return deleted_count
+

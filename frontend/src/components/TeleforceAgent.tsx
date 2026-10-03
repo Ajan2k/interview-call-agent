@@ -2,21 +2,47 @@ import React, { useState, useRef, useEffect } from 'react';
 import { UserAgent, UserAgentOptions, Registerer, Session, Invitation, Inviter, SessionState, RegistererState, Web } from 'sip.js';
 import { Phone, PhoneOff, Activity, Terminal, X } from 'lucide-react';
 
-export function TeleforceAgent({ autoDialNumber, autoDialTriggerId, onCallEnded }: { autoDialNumber?: string, autoDialTriggerId?: string, onCallEnded?: () => void }) {
+export interface TeleforceAgentProps {
+  autoDialNumber?: string;
+  autoDialTriggerId?: string;
+  candidateId?: string;
+  candidateName?: string;
+  candidateRole?: string;
+  onCallEnded?: () => void;
+}
+
+export function TeleforceAgent({
+  autoDialNumber,
+  autoDialTriggerId,
+  candidateId,
+  candidateName,
+  candidateRole,
+  onCallEnded,
+}: TeleforceAgentProps) {
   const [status, setStatus] = useState('Disconnected');
   const [session, setSession] = useState<Session | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [outboundNumber, setOutboundNumber] = useState('+91 ');
   const onCallEndedRef = useRef(onCallEnded);
+  const candidateIdRef = useRef(candidateId);
+  const candidateNameRef = useRef(candidateName);
+  const candidateRoleRef = useRef(candidateRole);
+
   useEffect(() => {
     onCallEndedRef.current = onCallEnded;
   }, [onCallEnded]);
+
+  useEffect(() => {
+    candidateIdRef.current = candidateId;
+    candidateNameRef.current = candidateName;
+    candidateRoleRef.current = candidateRole;
+  }, [candidateId, candidateName, candidateRole]);
 
   const safeOnCallEnded = () => {
     if (onCallEndedRef.current) onCallEndedRef.current();
   };
 
-const userAgentRef = useRef<UserAgent | null>(null);
+  const userAgentRef = useRef<UserAgent | null>(null);
   const registererRef = useRef<Registerer | null>(null);
   
   // Audio Context and WebSocket for AI Backend
@@ -272,7 +298,16 @@ const userAgentRef = useRef<UserAgent | null>(null);
         phone = remote?.uri?.user || remote?.displayName || '';
       } catch (e) {}
       addLog(`Initiating AI Session (Mode: ${mode}, Phone: ${phone || 'unknown'})`);
-      ws.send(JSON.stringify({ event: 'start', callMode: mode, phone }));
+      ws.send(
+        JSON.stringify({
+          event: 'start',
+          callMode: mode,
+          phone,
+          candidate_id: candidateIdRef.current || undefined,
+          candidate_name: candidateNameRef.current || undefined,
+          candidate_role: candidateRoleRef.current || undefined,
+        })
+      );
     };
 
     ws.onerror = () => {
@@ -568,7 +603,9 @@ const userAgentRef = useRef<UserAgent | null>(null);
         {session && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 border border-rose-200 text-rose-600 animate-pulse">
             <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-            <span className="text-xs font-mono font-bold">LIVE {formatTimer(callDuration)}</span>
+            <span className="text-xs font-mono font-bold">
+              {candidateName ? `INTERVIEW: ${candidateName}` : 'LIVE'} ({formatTimer(callDuration)})
+            </span>
           </div>
         )}
 
@@ -601,8 +638,16 @@ const userAgentRef = useRef<UserAgent | null>(null);
               <X size={20} />
             </button>
             
-            <h2 className="text-lg font-bold text-slate-800 mb-1">Phone Keypad</h2>
-            <p className="text-[10px] text-slate-500 mb-6 bg-slate-100 px-2 py-1 rounded-full">{status}</p>
+            <h2 className="text-lg font-bold text-slate-800 mb-0.5">Phone Keypad</h2>
+            <p className="text-[10px] text-slate-500 mb-3 bg-slate-100 px-2 py-0.5 rounded-full">{status}</p>
+
+            {candidateName && (
+              <div className="w-full bg-indigo-50/80 border border-indigo-100 rounded-lg px-3 py-2 mb-3 text-left">
+                <div className="text-[9px] uppercase font-bold text-indigo-500 tracking-wider">Candidate Interview Target</div>
+                <div className="text-xs font-bold text-indigo-950 truncate">{candidateName}</div>
+                {candidateRole && <div className="text-[10px] text-indigo-700 font-medium truncate">{candidateRole}</div>}
+              </div>
+            )}
 
             <input 
               type="text" 

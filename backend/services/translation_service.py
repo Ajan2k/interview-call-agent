@@ -1,19 +1,20 @@
 import os
 import httpx
 from typing import Dict, Any
+from core.config import settings
 
 
 class TranslationService:
     """Class-based service for language translation via Sarvam AI API."""
 
-    SARVAM_TRANSLATE_URL = "https://api.sarvam.ai/translate"
+    SARVAM_TRANSLATE_URL = settings.SARVAM_TRANSLATE_URL
 
     def __init__(self, api_key: str = None):
         self._api_key = api_key
 
     @property
     def api_key(self) -> str:
-        return self._api_key or os.getenv("SARVAM_API_KEY", "")
+        return self._api_key or settings.get_sarvam_api_key()
 
     def translate(
         self,

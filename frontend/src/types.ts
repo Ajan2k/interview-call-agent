@@ -1,35 +1,3 @@
-export type ContactStatus = "Pending" | "Calling" | "Ringing" | "Active" | "Voicemail" | "Completed" | "Failed" | "Scheduled";
-export type CampaignType = "reminder" | "support" | "sales" | "feedback";
-
-export interface Contact {
-  id: string;
-  name: string;
-  phone: string;
-  email?: string;
-  status: ContactStatus;
-  outcome?: "Interested" | "Not Interested" | "No Answer" | "Scheduled Callback" | "DND" | "N/A";
-  duration?: number; // in seconds
-  callTime?: string;
-  scheduledTime?: string;
-  notes?: string;
-  isIncoming?: boolean;
-  is_incoming?: boolean;
-  lastCalled?: string;
-  campaignId?: string;
-}
-
-export interface Campaign {
-  id: string;
-  name: string;
-  type: CampaignType;
-  status: "Draft" | "Running" | "Paused" | "Completed";
-  totalContacts: number;
-  completedContacts: number;
-  successRate: number; // e.g., 75%
-  createdAt: string;
-  systemInstruction?: string;
-}
-
 export interface CallMessage {
   id: string;
   role: "user" | "model" | "system";
@@ -48,4 +16,49 @@ export interface CallLog {
   time: string;
   transcript: CallMessage[];
   notes?: string;
+  message?: string;
+}
+
+export interface InterviewQuestion {
+  id: string;
+  category: "behavioral" | "technical";
+  text: string;
+  competency: string;
+  order: number;
+  completed?: boolean;
+  answer_notes?: string;
+}
+
+export interface Scorecard {
+  overall_score: number;
+  recommendation: "Strong Hire" | "Hire" | "Consider" | "Do Not Hire";
+  technical_score: number;
+  behavioral_score: number;
+  communication_score: number;
+  summary: string;
+  strengths: string[];
+  areas_for_improvement: string[];
+  question_evaluations?: Array<{
+    question: string;
+    summary_of_answer?: string;
+    score?: number;
+    feedback?: string;
+  }>;
+  evaluated_at?: string;
+}
+
+export interface Candidate {
+  id: string;
+  name: string;
+  phone: string;
+  position: string;
+  job_description: string;
+  resume_filename: string;
+  resume_text?: string;
+  status: "ready" | "in_progress" | "completed" | "evaluated";
+  questions: InterviewQuestion[];
+  scorecard?: Scorecard;
+  call_id?: string;
+  created_at: string;
+  updated_at: string;
 }

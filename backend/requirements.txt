@@ -10,3 +10,5 @@ psycopg2-binary
 pytest
 pytest-asyncio
 pydantic-settings
+pypdf
+python-docx
