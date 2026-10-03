@@ -10,6 +10,8 @@ from .reports import router as reports_router
 from .voice_config import router as voice_config_router
 from .translate import router as translate_router
 from .logs import router as logs_router
+from .voice import router as voice_router
+from . import voice
 
 api_router = APIRouter(prefix="/api")
 
@@ -26,6 +28,8 @@ api_router.include_router(logs_router)
 
 __all__ = [
     "api_router",
+    "voice_router",
+    "voice",
     "health_router",
     "contacts_router",
     "campaigns_router",

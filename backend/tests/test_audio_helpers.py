@@ -6,7 +6,7 @@ import wave
 
 import pytest
 
-import voice
+from routes import voice
 
 pytestmark = pytest.mark.unit
 

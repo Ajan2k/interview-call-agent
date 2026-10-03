@@ -76,15 +76,15 @@ TeleForce Agent is a full-stack AI calling platform consisting of:
 teleforce-agent/
 ├── backend/
 │   ├── main.py               # FastAPI app entry point (lifespan managed)
-│   ├── voice.py              # WebSocket voice session handler (STT/TTS/LLM)
-│   ├── logging_config.py     # Structured logging setup
 │   ├── requirements.txt      # Python dependencies
 │   ├── .env.example          # Environment variable template
 │   ├── pytest.ini            # Pytest configuration
-│   ├── core/                 # Central application configuration
+│   ├── core/                 # Central application configuration & logging
 │   │   ├── config.py         # BaseSettings, SecretStr, PostgresDsn & default_factory
+│   │   ├── logging.py        # Centralized structured logging & polling noise filter
 │   │   └── __init__.py
 │   ├── routes/               # Modular category routes
+│   │   ├── voice.py          # WebSocket voice session router & endpoint (/api/voice/teleforce_stream)
 │   │   ├── health.py         # /api/health
 │   │   ├── contacts.py       # /api/contacts
 │   │   ├── campaigns.py      # /api/campaigns
@@ -118,11 +118,20 @@ teleforce-agent/
 │   │   ├── database_manager.py # DatabaseManager & entity repositories
 │   │   ├── report_service.py   # ReportService & CSV generator
 │   │   ├── translation_service.py # TranslationService (Sarvam)
-│   │   └── log_service.py      # LogService
+│   │   ├── log_service.py      # LogService
+│   │   └── voice/              # Modular Voice AI subsystems
+│   │       ├── audio.py        # AudioProcessor & CallRecorder
+│   │       ├── markers.py      # MarkerService & control tag parsing
+│   │       ├── prompts.py      # PromptManager & multilingual scripts
+│   │       ├── tts.py          # TTSService (Cartesia/Sarvam/Azure)
+│   │       ├── stt.py          # STTService (Sarvam/Groq Whisper & language detection)
+│   │       ├── llm.py          # LLMService (multi-provider streaming & fallback)
+│   │       ├── session_manager.py # VoiceSessionManager (VAD loop & state machine)
+│   │       └── __init__.py
 │   ├── prompts/              # System prompt templates
 │   │   ├── inbound_prompt.txt   # System prompt for inbound calls
 │   │   └── outbound_prompt.txt  # System prompt for outbound calls (Daffy)
-│   └── tests/                # Automated pytest suite (85 unit & integration tests)
+│   └── tests/                # Automated pytest suite (86 unit & integration tests)
 │
 ├── frontend/
 │   ├── src/

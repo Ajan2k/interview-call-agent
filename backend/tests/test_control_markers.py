@@ -6,7 +6,7 @@ on session_state. The log_* helpers it calls write to disk/DB, so they're patche
 """
 import pytest
 
-import voice
+from routes import voice
 
 pytestmark = pytest.mark.unit
 

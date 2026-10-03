@@ -1,12 +1,11 @@
 from contextlib import asynccontextmanager
-from logging_config import setup_logging, apply_access_log_filter
+from core.logging import setup_logging, apply_access_log_filter
 LOG_FILE = setup_logging()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from voice import router as voice_router
-from routes import api_router
+from routes import api_router, voice_router
 import logging
 
 load_dotenv()

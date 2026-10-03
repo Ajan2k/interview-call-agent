@@ -1,14 +1,14 @@
+import os
 import logging
 import logging.handlers
-import os
-
 from dotenv import load_dotenv
 
 # setup_logging() runs before main.py calls load_dotenv(), so load .env here to
 # make flags like LOG_API_POLLING visible at logging-setup time.
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_BASE_DIR, ".env"))
 
-_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+_LOG_DIR = os.path.join(_BASE_DIR, "logs")
 _LOG_FILE = os.path.join(_LOG_DIR, "app.log")
 _ERROR_LOG_FILE = os.path.join(_LOG_DIR, "errors.log")
 _CONVERSATION_LOG_FILE = os.path.join(_LOG_DIR, "conversation.log")
@@ -17,8 +17,14 @@ _CONVERSATION_LOG_FILE = os.path.join(_LOG_DIR, "conversation.log")
 # everything useful in the console and app.log. Hidden by default; set
 # LOG_API_POLLING=true in .env to see them again. Failures (non-200) always show.
 _POLL_ENDPOINTS = (
-    "/api/health", "/api/campaigns", "/api/logs", "/api/voice-config",
-    "/api/contacts", "/api/call-history", "/api/meetings", "/api/callbacks",
+    "/api/health",
+    "/api/campaigns",
+    "/api/logs",
+    "/api/voice-config",
+    "/api/contacts",
+    "/api/call-history",
+    "/api/meetings",
+    "/api/callbacks",
 )
 
 
@@ -33,7 +39,7 @@ class _PollingNoiseFilter(logging.Filter):
         return not any(ep in msg for ep in _POLL_ENDPOINTS)
 
 
-def setup_logging():
+def setup_logging() -> str:
     """Send every logger (app code, uvicorn, httpx, etc.) to console plus two files:
     logs/app.log (everything, for deep debugging) and logs/errors.log (warnings/errors
     only, for a quick scan of what went wrong)."""
@@ -75,7 +81,7 @@ def setup_logging():
     return _LOG_FILE
 
 
-def apply_access_log_filter():
+def apply_access_log_filter() -> None:
     """(Re)attach the polling-noise filter to uvicorn's access logger AND all of
     its handlers. Called again at app startup because uvicorn configures its own
     logging around app import, which can leave handlers that bypass a filter
@@ -90,7 +96,7 @@ def apply_access_log_filter():
             h.addFilter(_PollingNoiseFilter())
 
 
-def get_conversation_logger():
+def get_conversation_logger() -> logging.Logger:
     """A dedicated logger for just the human-readable call transcript
     (who said what, in what language) at logs/conversation.log — separate from the
     noisy technical app.log so a call can be reviewed at a glance."""
