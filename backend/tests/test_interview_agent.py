@@ -216,3 +216,64 @@ class TestCandidateRoutes:
 
         # Verify deleted
         assert client.get(f"/api/candidates/{cand_id}").status_code == 404
+
+
+class TestInterviewControlMarkers:
+    def test_end_call_marker_sets_flag_and_is_stripped(self, session_state):
+        from routes import voice
+        out = voice.extract_control_markers("Thank you for joining today's interview. [END_CALL]", session_state)
+        assert session_state["pending_end_call"] is True
+        assert "END_CALL" not in out
+        assert out == "Thank you for joining today's interview."
+
+    def test_add_transcript_turn(self, session_state):
+        from routes import voice
+        voice.add_transcript(session_state, "caller", "I have 5 years experience with Python", "en-IN")
+        assert len(session_state["transcript"]) == 1
+        turn = session_state["transcript"][0]
+        assert turn["role"] == "caller"
+        assert turn["text"] == "I have 5 years experience with Python"
+        assert turn["lang"] == "en-IN"
+
+
+class TestSettingsUsageInServices:
+    def test_interview_service_uses_settings(self):
+        from services.interview_service import (
+            SARVAM_LLM_BASE_URL,
+            CEREBRAS_LLM_BASE_URL,
+            GEMINI_LLM_BASE_URL,
+            TOGETHER_LLM_BASE_URL,
+            FALLBACK_MODEL,
+        )
+        from core.config import settings
+        assert SARVAM_LLM_BASE_URL == settings.SARVAM_LLM_BASE_URL
+        assert CEREBRAS_LLM_BASE_URL == settings.CEREBRAS_LLM_BASE_URL
+        assert GEMINI_LLM_BASE_URL == settings.GEMINI_LLM_BASE_URL
+        assert TOGETHER_LLM_BASE_URL == settings.TOGETHER_LLM_BASE_URL
+        assert FALLBACK_MODEL == settings.FALLBACK_MODEL
+
+    def test_voice_llm_uses_settings(self):
+        from services.voice.llm import (
+            SARVAM_LLM_BASE_URL,
+            CEREBRAS_LLM_BASE_URL,
+            GEMINI_LLM_BASE_URL,
+            TOGETHER_LLM_BASE_URL,
+            FALLBACK_MODEL,
+        )
+        from core.config import settings
+        assert SARVAM_LLM_BASE_URL == settings.SARVAM_LLM_BASE_URL
+        assert CEREBRAS_LLM_BASE_URL == settings.CEREBRAS_LLM_BASE_URL
+        assert GEMINI_LLM_BASE_URL == settings.GEMINI_LLM_BASE_URL
+        assert TOGETHER_LLM_BASE_URL == settings.TOGETHER_LLM_BASE_URL
+        assert FALLBACK_MODEL == settings.FALLBACK_MODEL
+
+    def test_voice_tts_and_stt_use_settings(self):
+        from services.voice.tts import SARVAM_TTS_URL, CARTESIA_TTS_URL, CARTESIA_VERSION
+        from services.voice.stt import SARVAM_STT_URL
+        from services.translation_service import TranslationService
+        from core.config import settings
+        assert SARVAM_TTS_URL == settings.SARVAM_TTS_URL
+        assert CARTESIA_TTS_URL == settings.CARTESIA_TTS_URL
+        assert CARTESIA_VERSION == settings.CARTESIA_VERSION
+        assert SARVAM_STT_URL == settings.SARVAM_STT_URL
+        assert TranslationService.SARVAM_TRANSLATE_URL == settings.SARVAM_TRANSLATE_URL
