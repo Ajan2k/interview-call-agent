@@ -75,24 +75,66 @@ TeleForce Agent is a full-stack AI calling platform consisting of:
 ```
 teleforce-agent/
 ├── backend/
-│   ├── main.py               # FastAPI app entry point
+│   ├── main.py               # FastAPI app entry point (lifespan managed)
 │   ├── voice.py              # WebSocket voice session handler (STT/TTS/LLM)
-│   ├── api_routes.py         # REST API endpoints
-│   ├── database.py           # PostgreSQL connection & queries
 │   ├── logging_config.py     # Structured logging setup
 │   ├── requirements.txt      # Python dependencies
 │   ├── .env.example          # Environment variable template
-│   └── Scripts/
-│       ├── inbound_prompt.txt   # System prompt for inbound calls
-│       └── outbound_prompt.txt  # System prompt for outbound calls (Daffy)
+│   ├── pytest.ini            # Pytest configuration
+│   ├── core/                 # Central application configuration
+│   │   ├── config.py         # BaseSettings, SecretStr, PostgresDsn & default_factory
+│   │   └── __init__.py
+│   ├── routes/               # Modular category routes
+│   │   ├── health.py         # /api/health
+│   │   ├── contacts.py       # /api/contacts
+│   │   ├── campaigns.py      # /api/campaigns
+│   │   ├── calls.py          # /api/call-history, /api/recordings
+│   │   ├── meetings.py       # /api/meetings
+│   │   ├── callbacks.py      # /api/callbacks
+│   │   ├── reports.py        # /api/report
+│   │   ├── voice_config.py   # /api/voice-config
+│   │   ├── translate.py      # /api/translate
+│   │   ├── logs.py           # /api/logs
+│   │   └── __init__.py       # Combined API router
+│   ├── models/               # Object-oriented domain entities
+│   │   ├── contact.py        # Contact dataclass
+│   │   ├── campaign.py       # Campaign dataclass
+│   │   ├── call.py           # Call dataclass
+│   │   ├── meeting.py        # Meeting dataclass
+│   │   ├── callback.py       # Callback dataclass
+│   │   └── voice_config.py   # VoiceConfig dataclass
+│   ├── schemas/              # Pydantic request/response validation
+│   │   ├── contact.py
+│   │   ├── campaign.py
+│   │   ├── call.py
+│   │   ├── meeting.py
+│   │   ├── callback.py
+│   │   ├── voice_config.py
+│   │   ├── translate.py
+│   │   ├── report.py
+│   │   ├── health.py
+│   │   └── log.py
+│   ├── services/             # Class-based repositories & business services
+│   │   ├── database_manager.py # DatabaseManager & entity repositories
+│   │   ├── report_service.py   # ReportService & CSV generator
+│   │   ├── translation_service.py # TranslationService (Sarvam)
+│   │   └── log_service.py      # LogService
+│   ├── prompts/              # System prompt templates
+│   │   ├── inbound_prompt.txt   # System prompt for inbound calls
+│   │   └── outbound_prompt.txt  # System prompt for outbound calls (Daffy)
+│   └── tests/                # Automated pytest suite (85 unit & integration tests)
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx               # Root application component
 │   │   ├── main.tsx              # React entry point
 │   │   ├── types.ts              # TypeScript interfaces
+│   │   ├── index.css             # Tailwind CSS & custom design system
 │   │   ├── components/
-│   │   │   ├── TeleforceAgent.tsx   # Main agent control panel
+│   │   │   ├── ui/                  # Reusable UI design system & table components
+│   │   │   │   ├── TableComponents.tsx
+│   │   │   │   └── index.ts
+│   │   │   ├── TeleforceAgent.tsx   # Main agent control panel & SIP integration
 │   │   │   ├── CallLogs.tsx         # Live & historical call logs
 │   │   │   ├── CallHistory.tsx      # Call history table
 │   │   │   ├── Metrics.tsx          # Performance metrics
@@ -100,7 +142,8 @@ teleforce-agent/
 │   │   │   ├── ScheduleTracker.tsx  # Meeting/demo scheduler
 │   │   │   ├── ConversationModal.tsx # Conversation detail view
 │   │   │   └── LiveSimulator.tsx    # Browser-based call simulator
-│   │   └── utils/                # Utility functions
+│   │   └── utils/
+│   │       └── excelParser.ts    # Excel and CSV contact importer
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── .env.example
@@ -220,6 +263,31 @@ npm run dev
 The dashboard will be available at `http://localhost:5173`
 
 ---
+
+## 🧪 Running Tests & Quality Checks
+
+### Backend Tests (pytest)
+
+```bash
+cd backend
+python -m pytest
+```
+
+Runs the 79 automated unit and integration tests covering:
+- Audio WAV buffering & RIFF header manipulation
+- Control marker extraction (`[END_CALL]`, `[MEETING_BOOKED]`, `[CALLBACK]`, `[LEAD]`)
+- Multi-provider TTS pipelines (Cartesia, Sarvam, Azure)
+- LLM provider dispatching & prompt script loading
+- FastAPI REST integration & error handling
+- Dual-track call audio recorder & noise filtering
+
+### Frontend Typecheck & Build
+
+```bash
+cd frontend
+npm run lint       # TypeScript strict type checking
+npm run build      # Production bundle generation
+```
 
 ## API Reference
 

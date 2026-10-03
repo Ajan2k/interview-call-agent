@@ -1,7 +1,13 @@
-import React from 'react';
-import { PhoneCall, Trash2 } from 'lucide-react';
+import React, { ReactNode, ComponentType } from "react";
+import { PhoneCall, Trash2, LucideProps } from "lucide-react";
 
-export const StratroomHeader = ({ title, icon: Icon, children }: any) => {
+export interface StratroomHeaderProps {
+  title: string;
+  icon: ComponentType<LucideProps>;
+  children?: ReactNode;
+}
+
+export const StratroomHeader: React.FC<StratroomHeaderProps> = ({ title, icon: Icon, children }) => {
   return (
     <div className="bg-transparent overflow-hidden relative border-b border-gray-200 pb-2">
       {/* Background Banner Image - Top Right */}
@@ -9,10 +15,10 @@ export const StratroomHeader = ({ title, icon: Icon, children }: any) => {
         className="absolute top-0 right-0 w-1/2 md:w-2/3 h-full bg-no-repeat bg-right bg-cover opacity-90 pointer-events-none"
         style={{
           backgroundImage: "url('https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&q=80')",
-          maskImage: 'linear-gradient(to right, transparent, black 50%)',
-          WebkitMaskImage: 'linear-gradient(to right, transparent, black 50%)'
+          maskImage: "linear-gradient(to right, transparent, black 50%)",
+          WebkitMaskImage: "linear-gradient(to right, transparent, black 50%)",
         }}
-      ></div>
+      />
 
       <div className="p-5 relative z-10 flex flex-col sm:flex-row justify-between items-start min-h-[120px]">
         <div className="mt-auto">
@@ -30,15 +36,21 @@ export const StratroomHeader = ({ title, icon: Icon, children }: any) => {
   );
 };
 
-export const StratroomTable = ({ children }: { children: React.ReactNode }) => (
+export interface StratroomTableProps {
+  children: ReactNode;
+}
+
+export const StratroomTable: React.FC<StratroomTableProps> = ({ children }) => (
   <div className="bg-transparent overflow-x-auto mb-8">
-    <table className="w-full text-left border-collapse">
-      {children}
-    </table>
+    <table className="w-full text-left border-collapse">{children}</table>
   </div>
 );
 
-export const StratroomThead = ({ children }: { children: React.ReactNode }) => (
+export interface StratroomTheadProps {
+  children: ReactNode;
+}
+
+export const StratroomThead: React.FC<StratroomTheadProps> = ({ children }) => (
   <thead>
     <tr className="bg-[#dcfce7] border-y border-emerald-200">
       <th className="py-3 px-4 w-12 text-center">
@@ -49,13 +61,23 @@ export const StratroomThead = ({ children }: { children: React.ReactNode }) => (
   </thead>
 );
 
-export const StratroomTh = ({ children, className = "" }: any) => (
+export interface StratroomThProps {
+  children: ReactNode;
+  className?: string;
+}
+
+export const StratroomTh: React.FC<StratroomThProps> = ({ children, className = "" }) => (
   <th className={`py-3 px-4 text-[10px] font-bold text-slate-800 uppercase tracking-widest ${className}`}>
     {children}
   </th>
 );
 
-export const StratroomTr = ({ children, className = "" }: any) => (
+export interface StratroomTrProps {
+  children: ReactNode;
+  className?: string;
+}
+
+export const StratroomTr: React.FC<StratroomTrProps> = ({ children, className = "" }) => (
   <tr className={`border-b border-gray-200 hover:bg-slate-50 transition-colors ${className}`}>
     <td className="py-4 px-4 text-center align-middle">
       <input type="checkbox" className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-600 w-3 h-3" />
@@ -64,24 +86,48 @@ export const StratroomTr = ({ children, className = "" }: any) => (
   </tr>
 );
 
-export const StratroomTd = ({ children, className = "" }: any) => (
+export interface StratroomTdProps {
+  children: ReactNode;
+  className?: string;
+}
+
+export const StratroomTd: React.FC<StratroomTdProps> = ({ children, className = "" }) => (
   <td className={`py-4 px-4 text-[11px] align-middle text-slate-700 ${className}`}>
     {children}
   </td>
 );
 
-export const StratroomActions = ({ onCall, onDelete }: any) => (
+export interface StratroomActionsProps {
+  onCall?: () => void;
+  onDelete?: () => void;
+}
+
+export const StratroomActions: React.FC<StratroomActionsProps> = ({ onCall, onDelete }) => (
   <div className="flex items-center justify-end gap-1.5">
-    <button onClick={onCall} className="p-1.5 text-slate-400 hover:text-emerald-600 bg-white border border-slate-200 rounded-md hover:bg-emerald-50 transition" title="Call">
+    <button
+      onClick={onCall}
+      className="p-1.5 text-slate-400 hover:text-emerald-600 bg-white border border-slate-200 rounded-md hover:bg-emerald-50 transition"
+      title="Call"
+      type="button"
+    >
       <PhoneCall className="w-3.5 h-3.5" />
     </button>
-    <button onClick={onDelete} className="p-1.5 text-slate-400 hover:text-rose-600 bg-white border border-slate-200 rounded-md hover:bg-rose-50 transition" title="Delete">
+    <button
+      onClick={onDelete}
+      className="p-1.5 text-slate-400 hover:text-rose-600 bg-white border border-slate-200 rounded-md hover:bg-rose-50 transition"
+      title="Delete"
+      type="button"
+    >
       <Trash2 className="w-3.5 h-3.5" />
     </button>
   </div>
 );
 
-export const StratroomStatus = ({ status }: { status: string }) => {
+export interface StratroomStatusProps {
+  status: string;
+}
+
+export const StratroomStatus: React.FC<StratroomStatusProps> = ({ status }) => {
   let colorClass = "bg-slate-400";
   let textClass = "text-slate-500";
 
@@ -102,7 +148,7 @@ export const StratroomStatus = ({ status }: { status: string }) => {
 
   return (
     <div className={`flex items-center gap-1.5 text-[11px] font-bold ${textClass}`}>
-      <span className={`w-2 h-2 rounded-full ${colorClass}`}></span>
+      <span className={`w-2 h-2 rounded-full ${colorClass}`} />
       {status}
     </div>
   );

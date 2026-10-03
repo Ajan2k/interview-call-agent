@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Search, Clock, MessageSquare, Download, CheckCircle2, AlertCircle, Trash2, ArrowUpRight, Smile, Meh, Frown } from "lucide-react";
 import { CallLog } from "../types";
-import { StratroomHeader, StratroomTable, StratroomThead, StratroomTh, StratroomTr, StratroomTd, StratroomActions, StratroomStatus } from "./sampleUI";
+import { StratroomHeader, StratroomTable, StratroomThead, StratroomTh, StratroomTr, StratroomTd, StratroomActions, StratroomStatus } from "./ui";
 
 interface CallLogsProps {
   logs: CallLog[];

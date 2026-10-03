@@ -13,7 +13,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from groq import AsyncGroq
 from openai import AsyncOpenAI
 from logging_config import get_conversation_logger
-import database as db
+from services import database_manager as db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("voice")
@@ -55,10 +55,13 @@ AGENT_NAME = "caffy"
 CALL_MODE = "outbound"  # <-- change this to switch modes
 
 def load_script_prompt(call_mode: str, lang_name: str, few_shot: str) -> str:
-    """Load the sales script for this call mode from Scripts/outbound_prompt.txt or
-    Scripts/inbound_prompt.txt, filling in {lang_name} and {few_shot} placeholders."""
+    """Load the sales script for this call mode from prompts/ (or fallback Scripts/),
+    filling in {lang_name} and {few_shot} placeholders."""
     filename = "outbound_prompt.txt" if call_mode == "outbound" else "inbound_prompt.txt"
-    script_path = os.path.join(os.path.dirname(__file__), "Scripts", filename)
+    prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
+    if not os.path.exists(os.path.join(prompts_dir, filename)):
+        prompts_dir = os.path.join(os.path.dirname(__file__), "Scripts")
+    script_path = os.path.join(prompts_dir, filename)
     try:
         with open(script_path, "r", encoding="utf-8") as f:
             content = f.read().strip()
@@ -109,8 +112,10 @@ def strip_wav_header(audio_bytes: bytes, target_rate: int = 16000) -> bytes:
         return audio_bytes[44:] if len(audio_bytes) > 44 else audio_bytes
 
 RECORDINGS_DIR = os.path.join(os.path.dirname(__file__), "recordings")
-CALLS_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "calls.jsonl")
-MEETINGS_LOG_PATH = os.path.join(os.path.dirname(__file__), "logs", "meetings.jsonl")
+LOGS_DIR = os.path.join(os.path.dirname(__file__), "logs")
+CALLS_LOG_PATH = os.path.join(LOGS_DIR, "calls.jsonl")
+MEETINGS_LOG_PATH = os.path.join(LOGS_DIR, "meetings.jsonl")
+LEADS_LOG_PATH = os.path.join(LOGS_DIR, "leads.log")
 
 
 class CallRecorder:
@@ -348,32 +353,19 @@ async def process_utterance(utterance_bytes: bytes, session_state: dict, websock
         together_key = os.getenv("TOGETHER_API_KEY")
         gemini_key = os.getenv("GEMINI_API_KEY")
         cerebras_key = os.getenv("CEREBRAS_API_KEY")
-        if together_key:
-            default_provider = "together"
-        elif gemini_key:
-            default_provider = "gemini"
-        elif cerebras_key:
-            default_provider = "cerebras"
-        else:
-            default_provider = "groq"
-        llm_provider = os.getenv("LLM_PROVIDER", default_provider).lower()
+        llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()
+
         if llm_provider == "together" and together_key:
             llm_client = AsyncOpenAI(base_url=TOGETHER_LLM_BASE_URL, api_key=together_key, max_retries=0)
             model_name = os.getenv("TOGETHER_LLM_MODEL", "meta-llama/Llama-3.3-70B-Instruct-Turbo")
             llm_max_tokens = 400
         elif llm_provider == "gemini" and gemini_key:
             llm_client = AsyncOpenAI(base_url=GEMINI_LLM_BASE_URL, api_key=gemini_key, max_retries=0)
-            # NOTE: use the "-latest" aliases — fixed-version models (gemini-2.5-*)
-            # are closed to new accounts. flash-lite is fast and non-thinking;
-            # gemini-flash-latest "thinks" and burns the token budget mid-sentence.
             model_name = os.getenv("GEMINI_LLM_MODEL", "gemini-flash-lite-latest")
             llm_max_tokens = 400
         elif llm_provider == "cerebras" and cerebras_key:
             llm_client = AsyncOpenAI(base_url=CEREBRAS_LLM_BASE_URL, api_key=cerebras_key, max_retries=0)
-            # Cerebras dropped Llama from its lineup (2026): current models are
-            # zai-glm-4.7, gpt-oss-120b, gemma-4-31b
             model_name = os.getenv("CEREBRAS_LLM_MODEL", "zai-glm-4.7")
-            # Tamil/Indic script is token-heavy — too small a cap cuts replies mid-sentence
             llm_max_tokens = 400
         elif llm_provider == "sarvam" and sarvam_key:
             llm_client = AsyncOpenAI(base_url=SARVAM_LLM_BASE_URL, api_key=sarvam_key, max_retries=0)

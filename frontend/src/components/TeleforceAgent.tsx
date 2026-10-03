@@ -197,8 +197,8 @@ const userAgentRef = useRef<UserAgent | null>(null);
       });
       
       inviter.delegate = {
-        onReject: (response) => {
-          addLog(`SIP Rejected: ${response.message.statusCode} ${response.message.reasonPhrase}`);
+        onBye: () => {
+          addLog('Call ended by remote peer (BYE).');
           setStatus('Ready (Registered)');
           cleanupAudioBridge();
           setSession(null);
@@ -222,7 +222,17 @@ const userAgentRef = useRef<UserAgent | null>(null);
         }
       });
 
-      await inviter.invite();
+      await inviter.invite({
+        requestDelegate: {
+          onReject: (response) => {
+            addLog(`SIP Rejected: ${response.message.statusCode} ${response.message.reasonPhrase}`);
+            setStatus('Ready (Registered)');
+            cleanupAudioBridge();
+            setSession(null);
+            safeOnCallEnded();
+          }
+        }
+      });
     } catch (e: any) {
       addLog(`Dial Failed: ${e.message}`);
       setStatus('Ready (Registered)');

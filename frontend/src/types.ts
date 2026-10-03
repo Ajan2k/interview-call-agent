@@ -13,6 +13,9 @@ export interface Contact {
   scheduledTime?: string;
   notes?: string;
   isIncoming?: boolean;
+  is_incoming?: boolean;
+  lastCalled?: string;
+  campaignId?: string;
 }
 
 export interface Campaign {

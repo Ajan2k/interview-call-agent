@@ -3,7 +3,7 @@ import {
   Clock, PhoneCall, Plus, Sparkles, CheckCircle2, Trash2,
   PhoneIncoming, PhoneOutgoing, RotateCcw,
 } from "lucide-react";
-import { StratroomHeader } from "./sampleUI";
+import { StratroomHeader } from "./ui";
 
 interface Callback {
   id: number;

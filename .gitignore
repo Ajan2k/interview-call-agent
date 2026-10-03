@@ -51,12 +51,14 @@ backend/meetings.log
 Thumbs.db
 desktop.ini
 
-# ─── IDE ──────────────────────────────────────────────────────────────────────
+# ─── IDE & Config ────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-**.ini
-backend/tests/
+!pytest.ini
+!backend/pytest.ini
 
+# ─── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache/
 backend/.pytest_cache/

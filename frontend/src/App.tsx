@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
 import {
   Phone, PhoneCall, Plus, Trash2, Play, Pause, Search,
   Sparkles, Database, ShieldAlert, CheckCircle, RefreshCw,
@@ -12,7 +12,7 @@ import { CallHistory } from "./components/CallHistory";
 import { Reports } from "./components/Reports";
 import { Contact, Campaign, CallLog } from "./types";
 import { TeleforceAgent } from "./components/TeleforceAgent";
-import { StratroomHeader, StratroomTable, StratroomThead, StratroomTh, StratroomTr, StratroomTd, StratroomActions, StratroomStatus } from "./components/sampleUI";
+import { StratroomHeader, StratroomTable, StratroomThead, StratroomTh, StratroomTr, StratroomTd, StratroomActions, StratroomStatus } from "./components/ui";
 import { parseExcelOrCsv, ParsedContact } from "./utils/excelParser";
 
 export default function App() {
@@ -35,7 +35,7 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<"dashboard" | "dialer" | "scheduler" | "calls" | "reports" | "logs" | "voice">("dashboard");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       try {
         const parsed = await parseExcelOrCsv(e.target.files[0]);
@@ -299,7 +299,7 @@ YOUR PERSONALITY:
     }
   };
 
-  const handleAddContactSubmit = async (e: React.FormEvent) => {
+  const handleAddContactSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!newContactName || !newContactPhone) return;
     const manualContact: Contact = {
