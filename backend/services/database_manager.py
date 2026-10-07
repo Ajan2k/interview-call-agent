@@ -199,8 +199,19 @@ class DatabaseManager:
                         score INT,
                         feedback TEXT,
                         created_at VARCHAR(100),
-                        updated_at VARCHAR(100)
+                        updated_at VARCHAR(100),
+                        CONSTRAINT uq_candidate_responses_cand_qid UNIQUE (candidate_id, question_id)
                     );
+                """)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = 'uq_candidate_responses_cand_qid'
+                        ) THEN
+                            ALTER TABLE candidate_responses ADD CONSTRAINT uq_candidate_responses_cand_qid UNIQUE (candidate_id, question_id);
+                        END IF;
+                    END $$;
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_candidate_responses_cand_id ON candidate_responses(candidate_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_candidate_responses_qid ON candidate_responses(question_id);")

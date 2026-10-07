@@ -87,6 +87,83 @@ class TestCandidateRepository:
         assert repo.delete("cand_test_001") is True
         assert repo.get_by_id("cand_test_001") is None
 
+    def test_question_deletion_and_list_detail_consistency(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_sync.json")
+
+        cand = Candidate(
+            id="cand_sync_001",
+            name="Bob Sync",
+            phone="+919999911111",
+            position="Backend Dev",
+            questions=[
+                Question(id="q1", category="technical", text="Question 1", order=1),
+                Question(id="q2", category="technical", text="Question 2", order=2),
+                Question(id="q3", category="behavioral", text="Question 3", order=3),
+            ],
+        )
+        repo.save(cand)
+
+        # Verify initial 3 questions
+        loaded = repo.get_by_id("cand_sync_001")
+        assert len(loaded.questions) == 3
+
+        # Delete q2 and q3, keeping only q1
+        cand.questions = [
+            Question(id="q1", category="technical", text="Question 1 updated", order=1),
+        ]
+        repo.save(cand)
+
+        # Detail view must have ONLY 1 question (no resurrection of q2, q3)
+        detail = repo.get_by_id("cand_sync_001")
+        assert len(detail.questions) == 1
+        assert detail.questions[0].id == "q1"
+        assert detail.questions[0].text == "Question 1 updated"
+
+        # List view (get_all) must also have ONLY 1 question
+        all_cands = repo.get_all()
+        assert len(all_cands) == 1
+        assert len(all_cands[0].questions) == 1
+        assert all_cands[0].questions[0].id == "q1"
+
+        # get_responses must also return ONLY 1 question
+        responses = repo.get_responses("cand_sync_001")
+        assert len(responses) == 1
+        assert responses[0]["question_id"] == "q1"
+
+    def test_underscore_ids_no_collision(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_underscore.json")
+
+        # Two candidates whose concatenated IDs could collide if naive split was used
+        cand1 = Candidate(
+            id="cand_1_2",
+            name="Candidate A",
+            phone="111",
+            position="Engineer",
+            questions=[Question(id="3", category="technical", text="Q from Cand 1", order=1)],
+        )
+        cand2 = Candidate(
+            id="cand_1",
+            name="Candidate B",
+            phone="222",
+            position="Engineer",
+            questions=[Question(id="2_3", category="technical", text="Q from Cand 2", order=1)],
+        )
+        repo.save(cand1)
+        repo.save(cand2)
+
+        r1 = repo.get_by_id("cand_1_2")
+        r2 = repo.get_by_id("cand_1")
+        assert len(r1.questions) == 1
+        assert r1.questions[0].text == "Q from Cand 1"
+        assert len(r2.questions) == 1
+        assert r2.questions[0].text == "Q from Cand 2"
+
     def test_pagination_and_search_fallback(self, tmp_path, monkeypatch):
         db_mgr = DatabaseManager()
         monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
@@ -114,6 +191,330 @@ class TestCandidateRepository:
         # Filter by status
         ready = repo.get_all(status="ready")
         assert len(ready) == 3
+
+    def test_db_error_consistent_fallback_queries(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        # Mock connection where cursor operations raise an exception
+        class FailingCursor:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+            def execute(self, *args, **kwargs):
+                raise Exception("Simulated PostgreSQL connection failure")
+            def fetchall(self):
+                raise Exception("Simulated PostgreSQL connection failure")
+            def fetchone(self):
+                raise Exception("Simulated PostgreSQL connection failure")
+
+        class FailingConn:
+            def cursor(self, *args, **kwargs):
+                return FailingCursor()
+            def close(self):
+                pass
+
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_err.json")
+
+        # Seed fallback store with 4 candidates
+        for i in range(4):
+            repo.save(Candidate(
+                id=f"cand_err_{i}",
+                name=f"Dev {i}",
+                phone=f"+91100{i}",
+                position="Backend Engineer",
+                status="ready" if i % 2 == 0 else "evaluated",
+                questions=[Question(id=f"q_{i}", text=f"Question {i}", category="technical", order=1)],
+            ))
+
+        # Now simulate DB connection that throws errors on queries
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: FailingConn())
+
+        # 1. get_count() on DB error must NOT return 0; must return filtered fallback count
+        assert repo.get_count(status="ready") == 2
+        assert repo.get_count(status="evaluated") == 2
+        assert repo.get_count(search="Dev 1") == 1
+
+        # 2. get_all() on DB error must apply filters and pagination, not just [:limit]
+        res_ready = repo.get_all(limit=1, offset=0, status="ready")
+        assert len(res_ready) == 1
+        assert res_ready[0].status == "ready"
+
+        res_paged = repo.get_all(limit=2, offset=1)
+        assert len(res_paged) == 2
+
+        # 3. get_responses() on DB error must return candidate's questions, not empty list []
+        responses = repo.get_responses("cand_err_0")
+        assert len(responses) == 1
+        assert responses[0]["question_id"] == "q_0"
+
+    def test_delete_purges_fallback_file(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        # Simulate successful DB connection that reports 1 row deleted
+        class SuccessfulCursor:
+            def __init__(self):
+                self.rowcount = 1
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, query, *args, **kwargs):
+                if "SELECT id FROM candidates" in query:
+                    pass
+                elif "DELETE FROM candidates" in query:
+                    self.rowcount = 1
+            def fetchone(self):
+                return ("c_del_1",)
+            def fetchall(self):
+                return []
+
+        class SuccessfulConn:
+            def cursor(self, *args, **kwargs):
+                return SuccessfulCursor()
+            def close(self):
+                pass
+
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_del.json")
+
+        # First save candidate to fallback
+        cand = Candidate(id="c_del_1", name="Del Me", phone="123", position="QA")
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        repo.save(cand)
+        assert "c_del_1" in repo._load_fallback()
+
+        # Now simulate successful DB delete; fallback copy must also be removed
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: SuccessfulConn())
+        assert repo.delete("c_del_1") is True
+        assert "c_del_1" not in repo._load_fallback()
+
+    def test_delete_nonexistent_returns_false(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_del_none.json")
+
+        # 1. In offline mode: nonexistent candidate returns False
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        assert repo.delete("cand_ghost_999") is False
+
+        # 2. In DB mode: when row doesn't exist in DB, delete returns False
+        class NonexistentCursor:
+            def __init__(self):
+                self.rowcount = 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, *args, **kwargs):
+                self.rowcount = 0
+            def fetchone(self):
+                return None
+            def fetchall(self):
+                return []
+
+        class NonexistentConn:
+            def cursor(self, *args, **kwargs):
+                return NonexistentCursor()
+            def close(self):
+                pass
+
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: NonexistentConn())
+        assert repo.delete("cand_ghost_999") is False
+
+    def test_delete_purges_recordings_and_calls(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        recordings_dir = tmp_path / "recordings"
+        recordings_dir.mkdir()
+        dummy_wav = recordings_dir / "recording_call_99.wav"
+        dummy_wav.write_bytes(b"RIFF dummy wav audio data")
+
+        from core.config import settings
+        monkeypatch.setattr(settings, "RECORDINGS_DIR", recordings_dir)
+
+        deleted_queries = []
+        class CallCursor:
+            def __init__(self):
+                self.rowcount = 1
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, query, *args, **kwargs):
+                deleted_queries.append(query)
+                self.rowcount = 1
+            def fetchone(self):
+                return ("c_with_call",)
+            def fetchall(self):
+                return [("recording_call_99.wav",)]
+
+        class CallConn:
+            def cursor(self, *args, **kwargs):
+                return CallCursor()
+            def close(self):
+                pass
+
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_media.json")
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: CallConn())
+
+        # Verify wav exists before deletion
+        assert dummy_wav.exists()
+
+        assert repo.delete("c_with_call", purge_linked_calls=True, purge_recordings=True) is True
+
+        # Verify physical recording WAV was deleted from disk
+        assert not dummy_wav.exists()
+
+        # Verify calls and call_logs deletion queries were executed
+        assert any("DELETE FROM calls" in q for q in deleted_queries)
+        assert any("DELETE FROM call_logs" in q for q in deleted_queries)
+
+
+    def test_offline_save_dirty_tracking_and_replay(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_replay.json")
+
+        # 1. Save while offline
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        cand = Candidate(
+            id="c_rep_1",
+            name="Replay Candidate",
+            phone="987",
+            position="SRE",
+            questions=[Question(id="q1", text="SRE question", category="technical")],
+        )
+        repo.save(cand)
+
+        # Verify dirty tracking and status visibility
+        assert repo.last_write_storage == "fallback"
+        assert repo.get_pending_sync_count() == 1
+        status = repo.get_storage_status()
+        assert status["mode"] == "fallback"
+        assert status["pending_sync_count"] == 1
+        assert status["fallback_records_count"] == 1
+
+        # 2. Simulate DB recovery and replay
+        saved_to_db = []
+        monkeypatch.setattr(repo, "_save_to_postgres", lambda c, conn: saved_to_db.append(c.id))
+
+        class MockConn:
+            def close(self):
+                pass
+
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: MockConn())
+        sync_result = repo.sync_fallback_to_db()
+
+        assert sync_result["synced_count"] == 1
+        assert sync_result["pending_count"] == 0
+        assert "c_rep_1" in saved_to_db
+        assert repo.get_pending_sync_count() == 0
+
+    def test_concurrent_fallback_writes(self, tmp_path, monkeypatch):
+        import concurrent.futures
+        db_mgr = DatabaseManager()
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_concurrent.json")
+
+        num_threads = 10
+        candidates = [
+            Candidate(id=f"conc_{i}", name=f"Concurrent {i}", phone=f"555{i}", position="Dev")
+            for i in range(num_threads)
+        ]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(repo.save, c) for c in candidates]
+            for f in concurrent.futures.as_completed(futures):
+                assert f.result() is True
+
+        data = repo._load_fallback()
+        assert len(data) == num_threads
+        for i in range(num_threads):
+            assert f"conc_{i}" in data
+
+    def test_phone_normalization_and_exact_matching(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: None)
+        repo = CandidateRepository(db_mgr)
+        repo.fallback_file = str(tmp_path / "candidates_phone.json")
+
+        cand_us = Candidate(
+            id="cand_us_01",
+            name="Alice US",
+            phone="+1 (415) 555-2671",
+            position="Engineer",
+        )
+        cand_in = Candidate(
+            id="cand_in_01",
+            name="Raj India",
+            phone="+91 98765-43210",
+            position="Lead",
+        )
+        repo.save(cand_us)
+        repo.save(cand_in)
+
+        # 1. Exact match with variations
+        assert repo.get_by_phone("+14155552671").id == "cand_us_01"
+        assert repo.get_by_phone("4155552671").id == "cand_us_01"
+        assert repo.get_by_phone("(415) 555-2671").id == "cand_us_01"
+
+        assert repo.get_by_phone("+919876543210").id == "cand_in_01"
+        assert repo.get_by_phone("9876543210").id == "cand_in_01"
+        assert repo.get_by_phone("+91 98765-43210").id == "cand_in_01"
+
+        # 2. Rejection of empty, whitespace, and short inputs
+        assert repo.get_by_phone("") is None
+        assert repo.get_by_phone("   ") is None
+        assert repo.get_by_phone("+") is None
+        assert repo.get_by_phone("123") is None
+        assert repo.get_by_phone("0") is None
+
+        # 3. Elimination of false-positive substring matches
+        assert repo.get_by_phone("98765") is None
+        assert repo.get_by_phone("43210") is None
+        assert repo.get_by_phone("5552671") is None
+        assert repo.get_by_phone("+14155552672") is None  # 1 digit off
+
+    def test_phone_btree_index_query_not_ilike(self, tmp_path, monkeypatch):
+        db_mgr = DatabaseManager()
+        executed_queries = []
+
+        class QueryTrackingCursor:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, query, params=None):
+                executed_queries.append((query, params))
+            def fetchone(self):
+                return ("cand_btree_01",)
+
+        class QueryTrackingConn:
+            def cursor(self, *args, **kwargs):
+                return QueryTrackingCursor()
+            def close(self):
+                pass
+
+        repo = CandidateRepository(db_mgr)
+        monkeypatch.setattr(db_mgr, "get_connection", lambda: QueryTrackingConn())
+        monkeypatch.setattr(repo, "get_by_id", lambda cid: Candidate(id=cid, name="BTree Cand", phone="+14155552671", position="Dev"))
+
+        cand = repo.get_by_phone("+1 (415) 555-2671")
+        assert cand is not None
+        assert cand.id == "cand_btree_01"
+
+        # Verify query uses exact equality with ANY(%s) and NO wildcard ILIKE / LIKE
+        assert len(executed_queries) == 1
+        sql, params = executed_queries[0]
+        assert "WHERE phone = ANY(%s)" in sql
+        assert "ILIKE" not in sql
+        assert "LIKE" not in sql
+        # Check params contains exact variants without any '%' wildcards
+        variants = params[0]
+        assert not any("%" in v for v in variants)
+        assert "+14155552671" in variants
+        assert "4155552671" in variants
 
 
 class TestInterviewService:

@@ -92,6 +92,25 @@ class TestCandidatesAPI:
         r = client.get("/api/candidates/nonexistent-id-999")
         assert r.status_code == 404
 
+    def test_delete_nonexistent_candidate_404(self, client):
+        r = client.delete("/api/candidates/nonexistent-id-999")
+        assert r.status_code == 404
+
+
+    def test_candidate_storage_status_and_sync(self, client):
+        r = client.get("/api/candidates/storage/status")
+        assert r.status_code == 200
+        data = r.json()
+        assert "mode" in data
+        assert "is_db_connected" in data
+        assert "pending_sync_count" in data
+
+        # Test sync endpoint
+        sync_res = client.post("/api/candidates/storage/sync")
+        assert sync_res.status_code == 200
+        sync_data = sync_res.json()
+        assert "status" in sync_data
+
 
 class TestCallHistory:
     def test_call_history_falls_back_to_jsonl(self, client, monkeypatch):

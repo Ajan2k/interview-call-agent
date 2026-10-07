@@ -10,7 +10,7 @@ from schemas.candidate import (
     QuestionsUpdateRequest,
 )
 from services.document_parser import document_parser
-from services.candidate_repository import candidate_repo
+from services.candidate_repository import candidate_repo, normalize_phone_e164
 from services.interview_service import interview_service, DEFAULT_BEHAVIORAL_QUESTIONS
 from services.database_manager import call_repo
 
@@ -22,6 +22,19 @@ router = APIRouter(prefix="/candidates", tags=["candidates"])
 async def get_default_behavioral_questions():
     """Returns the default 5 STAR-method behavioral questions."""
     return {"questions": DEFAULT_BEHAVIORAL_QUESTIONS}
+
+
+@router.get("/storage/status")
+async def get_candidate_storage_status():
+    """Returns visibility into whether candidate data is operating against PostgreSQL or fallback,
+    along with pending sync count and last synchronization timestamp."""
+    return candidate_repo.get_storage_status()
+
+
+@router.post("/storage/sync")
+async def sync_candidate_storage():
+    """Replays pending offline/fallback candidate records into PostgreSQL."""
+    return candidate_repo.sync_fallback_to_db()
 
 
 @router.post("", response_model=CandidateResponse)
@@ -63,10 +76,19 @@ async def create_candidate(
             custom_behavioral=custom_beh_list,
         )
 
+        import re
+        digits_only = re.sub(r"\D", "", phone)
+        if len(digits_only) < 7:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid phone number: must contain at least 7 digits in standard telephone or E.164 format.",
+            )
+        clean_phone = normalize_phone_e164(phone.strip())
+
         candidate = Candidate(
-            id=f"cand_{resume.filename[:6].lower().replace('.', '')}_{phone[-4:]}",
+            id=f"cand_{resume.filename[:6].lower().replace('.', '')}_{clean_phone[-4:]}",
             name=name.strip(),
-            phone=phone.strip(),
+            phone=clean_phone,
             position=position.strip(),
             job_description=job_description.strip(),
             resume_filename=filename,
@@ -101,6 +123,7 @@ async def list_candidates(
     response.headers["X-Total-Count"] = str(total)
     response.headers["X-Limit"] = str(limit)
     response.headers["X-Offset"] = str(offset)
+    response.headers["X-Storage-Mode"] = candidate_repo.storage_mode
     return [c.to_dict() for c in candidates]
 
 
@@ -206,9 +229,18 @@ async def evaluate_candidate(candidate_id: str):
 
 
 @router.delete("/{candidate_id}")
-async def delete_candidate(candidate_id: str):
-    """Deletes candidate profile, responses, and scorecard."""
-    success = candidate_repo.delete(candidate_id)
+async def delete_candidate(candidate_id: str, purge_calls: bool = True):
+    """Deletes candidate profile, questions, responses, scorecard, and optionally purges linked calls and audio recordings."""
+    success = candidate_repo.delete(
+        candidate_id,
+        purge_linked_calls=purge_calls,
+        purge_recordings=purge_calls,
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    return {"message": "Candidate deleted successfully"}
+    return {
+        "message": "Candidate deleted successfully",
+        "candidate_id": candidate_id,
+        "calls_purged": purge_calls,
+    }
+
