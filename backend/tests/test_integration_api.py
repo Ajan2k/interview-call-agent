@@ -99,6 +99,28 @@ class TestCallHistory:
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
+    def test_call_transcript_jsonl_fallback(self, client, monkeypatch):
+        from routes.calls import _CALLS_JSONL
+        import json
+        monkeypatch.setattr(call_repo, "get_transcript", lambda cid: None)
+        # Create a mock call in jsonl
+        monkeypatch.setattr("routes.calls._read_jsonl", lambda path: [{
+            "id": "mock_call_123",
+            "phone": "+919876543210",
+            "direction": "incoming",
+            "start": "2026-10-07 10:00:00",
+            "candidate_id": "cand_123",
+            "candidate_name": "Test Candidate",
+            "transcript": [{"role": "caller", "text": "Hello"}],
+        }])
+        r = client.get("/api/call-history/mock_call_123/transcript")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["found"] is True
+        assert data["candidate_id"] == "cand_123"
+        assert data["candidate_name"] == "Test Candidate"
+        assert len(data["transcript"]) == 1
+
     def test_recordings_missing_file_404(self, client):
         r = client.get("/api/recordings/nonexistent.wav")
         assert r.status_code == 404

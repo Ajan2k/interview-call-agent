@@ -123,18 +123,41 @@ async def update_candidate_questions(candidate_id: str, req: QuestionsUpdateRequ
     updated_questions = [
         Question(
             id=q.id,
+            candidate_id=candidate_id,
             category=q.category,
             text=q.text,
             competency=q.competency,
             order=q.order,
             completed=q.completed,
             answer_notes=q.answer_notes,
+            score=q.score,
+            feedback=q.feedback,
         )
         for q in req.questions
     ]
     cand.questions = updated_questions
     candidate_repo.save(cand)
     return cand.to_dict()
+
+
+@router.get("/{candidate_id}/responses")
+async def get_candidate_responses(candidate_id: str):
+    """Returns candidate question responses tracked by candidate_id using a SQL JOIN."""
+    cand = candidate_repo.get_by_id(candidate_id)
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    responses = candidate_repo.get_responses(candidate_id)
+    return {"candidate_id": candidate_id, "responses": responses}
+
+
+@router.get("/{candidate_id}/calls")
+async def get_candidate_calls(candidate_id: str):
+    """Returns all interview calls for a candidate using a SQL JOIN."""
+    cand = candidate_repo.get_by_id(candidate_id)
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    calls = call_repo.get_by_candidate_id(candidate_id)
+    return {"candidate_id": candidate_id, "calls": calls}
 
 
 @router.post("/{candidate_id}/evaluate", response_model=CandidateResponse)
@@ -148,16 +171,30 @@ async def evaluate_candidate(candidate_id: str):
     transcript = []
     if cand.call_id:
         call_rec = call_repo.get_by_id(cand.call_id)
-        if call_rec and call_rec.transcript:
-            transcript = call_rec.transcript
-    else:
-        # Search calls for candidate phone
+        if call_rec:
+            transcript = call_rec.get("transcript") if isinstance(call_rec, dict) else getattr(call_rec, "transcript", [])
+
+    if not transcript:
+        # Use SQL JOIN to fetch calls associated with this candidate_id
+        cand_calls = call_repo.get_by_candidate_id(cand.id)
+        if cand_calls:
+            for c in cand_calls:
+                c_transcript = c.get("transcript") if isinstance(c, dict) else getattr(c, "transcript", None)
+                if c_transcript:
+                    transcript = c_transcript
+                    cand.call_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", None)
+                    break
+
+    if not transcript:
+        # Fallback to phone search for legacy unlinked calls
         all_calls = call_repo.get_all() or []
         for c in all_calls:
-            if c and getattr(c, "phone", None) and cand.phone and (cand.phone in c.phone or c.phone in cand.phone):
-                if getattr(c, "transcript", None):
-                    transcript = c.transcript
-                    cand.call_id = c.id
+            c_phone = c.get("phone") if isinstance(c, dict) else getattr(c, "phone", None)
+            if c_phone and cand.phone and (cand.phone in c_phone or c_phone in cand.phone):
+                c_transcript = c.get("transcript") if isinstance(c, dict) else getattr(c, "transcript", None)
+                if c_transcript:
+                    transcript = c_transcript
+                    cand.call_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", None)
                     break
 
     logger.info(f"[EVALUATE] Running scorecard evaluation for {cand.name} ({len(transcript)} turns)...")
@@ -170,7 +207,7 @@ async def evaluate_candidate(candidate_id: str):
 
 @router.delete("/{candidate_id}")
 async def delete_candidate(candidate_id: str):
-    """Deletes candidate profile and scorecard."""
+    """Deletes candidate profile, responses, and scorecard."""
     success = candidate_repo.delete(candidate_id)
     if not success:
         raise HTTPException(status_code=404, detail="Candidate not found")

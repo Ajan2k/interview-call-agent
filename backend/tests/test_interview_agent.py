@@ -69,6 +69,18 @@ class TestCandidateRepository:
         assert len(retrieved.questions) == 2
         assert retrieved.questions[0].text == "Tell me about a crisis"
 
+        # Test responses query tracked by candidate_id
+        responses = repo.get_responses("cand_test_001")
+        assert len(responses) == 2
+        assert responses[0]["candidate_id"] == "cand_test_001"
+        assert responses[0]["candidate_name"] == "Alice Walker"
+        assert responses[0]["candidate_position"] == "Staff ML Engineer"
+
+        # Test phone lookup
+        by_phone = repo.get_by_phone("+1234567890")
+        assert by_phone is not None
+        assert by_phone.id == "cand_test_001"
+
         all_cands = repo.get_all()
         assert len(all_cands) == 1
 
@@ -204,13 +216,25 @@ class TestCandidateRoutes:
         assert len(put_res.json()["questions"]) == 1
         assert put_res.json()["questions"][0]["text"] == "Edited behavioral question"
 
-        # 5. Evaluate candidate
+        # 5. Get tracked candidate responses by candidate_id
+        resp_res = client.get(f"/api/candidates/{cand_id}/responses")
+        assert resp_res.status_code == 200
+        assert resp_res.json()["candidate_id"] == cand_id
+        assert len(resp_res.json()["responses"]) == 1
+        assert resp_res.json()["responses"][0]["candidate_id"] == cand_id
+
+        # 6. Get candidate calls by candidate_id
+        calls_res = client.get(f"/api/candidates/{cand_id}/calls")
+        assert calls_res.status_code == 200
+        assert calls_res.json()["candidate_id"] == cand_id
+
+        # 7. Evaluate candidate
         eval_res = client.post(f"/api/candidates/{cand_id}/evaluate")
         assert eval_res.status_code == 200
         assert eval_res.json()["status"] == "evaluated"
         assert eval_res.json()["scorecard"] is not None
 
-        # 6. Delete candidate
+        # 8. Delete candidate
         del_res = client.delete(f"/api/candidates/{cand_id}")
         assert del_res.status_code == 200
 

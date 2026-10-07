@@ -13,9 +13,12 @@ class Question:
     order: int = 1
     completed: bool = False
     answer_notes: Optional[str] = None
+    candidate_id: Optional[str] = None
+    score: Optional[int] = None
+    feedback: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "id": self.id,
             "category": self.category,
             "text": self.text,
@@ -24,6 +27,13 @@ class Question:
             "completed": self.completed,
             "answer_notes": self.answer_notes,
         }
+        if self.candidate_id is not None:
+            data["candidate_id"] = self.candidate_id
+        if self.score is not None:
+            data["score"] = self.score
+        if self.feedback is not None:
+            data["feedback"] = self.feedback
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Question":
@@ -35,6 +45,61 @@ class Question:
             order=data.get("order", 1),
             completed=data.get("completed", False),
             answer_notes=data.get("answer_notes"),
+            candidate_id=data.get("candidate_id"),
+            score=data.get("score"),
+            feedback=data.get("feedback"),
+        )
+
+
+@dataclass
+class CandidateResponseRecord:
+    id: str
+    candidate_id: str
+    question_id: str
+    question_text: str
+    category: str = "technical"
+    competency: str = ""
+    order_num: int = 1
+    completed: bool = False
+    response_text: Optional[str] = None
+    score: Optional[int] = None
+    feedback: Optional[str] = None
+    created_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "candidate_id": self.candidate_id,
+            "question_id": self.question_id,
+            "category": self.category,
+            "question_text": self.question_text,
+            "competency": self.competency,
+            "order_num": self.order_num,
+            "completed": self.completed,
+            "response_text": self.response_text,
+            "score": self.score,
+            "feedback": self.feedback,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CandidateResponseRecord":
+        return cls(
+            id=data.get("id", str(uuid.uuid4())[:8]),
+            candidate_id=data.get("candidate_id", ""),
+            question_id=data.get("question_id", ""),
+            category=data.get("category", "technical"),
+            question_text=data.get("question_text", ""),
+            competency=data.get("competency", ""),
+            order_num=data.get("order_num", 1),
+            completed=data.get("completed", False),
+            response_text=data.get("response_text"),
+            score=data.get("score"),
+            feedback=data.get("feedback"),
+            created_at=data.get("created_at", time.strftime("%Y-%m-%d %H:%M:%S")),
+            updated_at=data.get("updated_at", time.strftime("%Y-%m-%d %H:%M:%S")),
         )
 
 
@@ -121,8 +186,13 @@ class Candidate:
         scorecard_raw = data.get("scorecard")
         scorecard = Scorecard.from_dict(scorecard_raw) if isinstance(scorecard_raw, dict) else None
 
+        cand_id = data.get("id", f"cand_{uuid.uuid4().hex[:8]}")
+        for q in questions:
+            if hasattr(q, "candidate_id") and not q.candidate_id:
+                q.candidate_id = cand_id
+
         return cls(
-            id=data.get("id", f"cand_{uuid.uuid4().hex[:8]}"),
+            id=cand_id,
             name=data.get("name", ""),
             phone=data.get("phone", ""),
             position=data.get("position", ""),

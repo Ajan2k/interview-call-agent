@@ -11,6 +11,9 @@ class CallTranscriptItemSchema(BaseModel):
 
 class CallResponseSchema(BaseModel):
     id: str
+    candidate_id: Optional[str] = None
+    candidate_name: Optional[str] = None
+    candidate_position: Optional[str] = None
     direction: str
     phone: str
     start: Optional[str] = None
@@ -30,4 +33,6 @@ class CallTranscriptResponseSchema(BaseModel):
     phone: Optional[str] = ""
     direction: Optional[str] = ""
     start: Optional[str] = ""
+    candidate_id: Optional[str] = None
+    candidate_name: Optional[str] = None
     transcript: List[Dict[str, Any]] = Field(default_factory=list)

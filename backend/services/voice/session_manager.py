@@ -377,13 +377,11 @@ class VoiceSessionManager:
                     if candidate_id:
                         cand = candidate_repo.get_by_id(candidate_id)
                     elif session_state["phone"]:
-                        for c in candidate_repo.get_all():
-                            if c.phone and (session_state["phone"] in c.phone or c.phone in session_state["phone"]):
-                                cand = c
-                                break
+                        cand = candidate_repo.get_by_phone(session_state["phone"])
 
                     if cand:
                         session_state["candidate"] = cand
+                        session_state["candidate_id"] = cand.id
                         cand.status = "in_progress"
                         cand.call_id = call_id
                         candidate_repo.save(cand)
@@ -524,8 +522,11 @@ class VoiceSessionManager:
                 try:
                     end_time = time.time()
                     start_time = session_state.get("call_start", end_time)
+                    cand_obj = session_state.get("candidate")
+                    candidate_id = session_state.get("candidate_id") or (cand_obj.id if cand_obj else None)
                     record = {
                         "id": session_state["call_id"],
+                        "candidate_id": candidate_id,
                         "direction": "incoming" if session_state.get("call_mode") == "inbound" else "outgoing",
                         "phone": session_state.get("phone", ""),
                         "start": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),

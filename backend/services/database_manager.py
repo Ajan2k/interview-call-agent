@@ -184,10 +184,32 @@ class DatabaseManager:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_candidates_created_at ON candidates(created_at DESC);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status);")
 
+                # Candidate Question Responses Table (tracking candidate responses by candidate_id)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS candidate_responses (
+                        id VARCHAR(255) PRIMARY KEY,
+                        candidate_id VARCHAR(255) NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                        question_id VARCHAR(255) NOT NULL,
+                        category VARCHAR(50) DEFAULT 'technical',
+                        question_text TEXT NOT NULL,
+                        competency VARCHAR(255) DEFAULT '',
+                        order_num INT DEFAULT 1,
+                        completed BOOLEAN DEFAULT FALSE,
+                        response_text TEXT,
+                        score INT,
+                        feedback TEXT,
+                        created_at VARCHAR(100),
+                        updated_at VARCHAR(100)
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_candidate_responses_cand_id ON candidate_responses(candidate_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_candidate_responses_qid ON candidate_responses(question_id);")
+
                 # Call Logs Table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS call_logs (
                         id VARCHAR(255) PRIMARY KEY,
+                        candidate_id VARCHAR(255) REFERENCES candidates(id) ON DELETE SET NULL,
                         contact_name VARCHAR(255),
                         phone VARCHAR(100),
                         campaign_name VARCHAR(255),
@@ -199,6 +221,8 @@ class DatabaseManager:
                         transcript JSONB
                     );
                 """)
+                cur.execute("ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS candidate_id VARCHAR(255) REFERENCES candidates(id) ON DELETE SET NULL;")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_call_logs_candidate_id ON call_logs(candidate_id);")
 
                 # Voice Config Table
                 cur.execute("""
@@ -214,6 +238,7 @@ class DatabaseManager:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS calls (
                         id VARCHAR(255) PRIMARY KEY,
+                        candidate_id VARCHAR(255) REFERENCES candidates(id) ON DELETE SET NULL,
                         direction VARCHAR(20),
                         phone VARCHAR(100),
                         start_time TIMESTAMP,
@@ -229,9 +254,11 @@ class DatabaseManager:
                         transcript JSONB
                     );
                 """)
+                cur.execute("ALTER TABLE calls ADD COLUMN IF NOT EXISTS candidate_id VARCHAR(255) REFERENCES candidates(id) ON DELETE SET NULL;")
 
                 # Performance Indexes for Calls
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_phone ON calls(phone);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_candidate_id ON calls(candidate_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_start_time ON calls(start_time DESC);")
 
             self._migrate_jsonl_history(conn)
@@ -284,7 +311,7 @@ class DatabaseManager:
 
 
 class CallRepository:
-    """Encapsulates Call records and transcript retrieval."""
+    """Encapsulates Call records, candidate joins, and transcript retrieval."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -296,10 +323,11 @@ class CallRepository:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO calls (id, direction, phone, start_time, end_time, duration_sec,
+                    INSERT INTO calls (id, candidate_id, direction, phone, start_time, end_time, duration_sec,
                         language, lead, lead_status, meeting, callback, ended_by, recording, transcript)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
+                        candidate_id = COALESCE(EXCLUDED.candidate_id, calls.candidate_id),
                         direction = EXCLUDED.direction,
                         phone = EXCLUDED.phone,
                         start_time = EXCLUDED.start_time,
@@ -314,7 +342,7 @@ class CallRepository:
                         recording = EXCLUDED.recording,
                         transcript = EXCLUDED.transcript;
                 """, (
-                    call.id, call.direction, call.phone, call.start, call.end,
+                    call.id, getattr(call, "candidate_id", None), call.direction, call.phone, call.start, call.end,
                     call.duration_sec, call.language, call.lead, call.resolved_lead_status(),
                     call.meeting, call.callback, call.ended_by, call.recording,
                     json.dumps(call.transcript) if call.transcript else None,
@@ -333,13 +361,16 @@ class CallRepository:
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, direction, phone,
-                           to_char(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
-                           to_char(end_time,   'YYYY-MM-DD HH24:MI:SS') AS end,
-                           duration_sec, language, lead, lead_status, meeting, callback,
-                           ended_by, recording, transcript
-                    FROM calls
-                    ORDER BY start_time DESC
+                    SELECT c.id, c.candidate_id, c.direction, c.phone,
+                           to_char(c.start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
+                           to_char(c.end_time,   'YYYY-MM-DD HH24:MI:SS') AS end,
+                           c.duration_sec, c.language, c.lead, c.lead_status, c.meeting, c.callback,
+                           c.ended_by, c.recording, c.transcript,
+                           cand.name AS candidate_name,
+                           cand.position AS candidate_position
+                    FROM calls c
+                    LEFT JOIN candidates cand ON c.candidate_id = cand.id
+                    ORDER BY c.start_time DESC
                     LIMIT %s;
                 """, (limit,))
                 rows = cur.fetchall()
@@ -366,12 +397,16 @@ class CallRepository:
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, direction, phone,
-                           to_char(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
-                           to_char(end_time,   'YYYY-MM-DD HH24:MI:SS') AS end,
-                           duration_sec, language, lead, lead_status, meeting, callback,
-                           ended_by, recording, transcript
-                    FROM calls WHERE id = %s;
+                    SELECT c.id, c.candidate_id, c.direction, c.phone,
+                           to_char(c.start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
+                           to_char(c.end_time,   'YYYY-MM-DD HH24:MI:SS') AS end,
+                           c.duration_sec, c.language, c.lead, c.lead_status, c.meeting, c.callback,
+                           c.ended_by, c.recording, c.transcript,
+                           cand.name AS candidate_name,
+                           cand.position AS candidate_position
+                    FROM calls c
+                    LEFT JOIN candidates cand ON c.candidate_id = cand.id
+                    WHERE c.id = %s;
                 """, (call_id,))
                 row = cur.fetchone()
                 if row:
@@ -388,6 +423,58 @@ class CallRepository:
             return None
         finally:
             conn.close()
+
+    def get_by_candidate_id(self, candidate_id: str) -> List[Dict[str, Any]]:
+        """Retrieve all calls associated with a candidate using SQL JOIN."""
+        conn = self.db_manager.get_connection()
+        if not conn:
+            return []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT c.id, c.candidate_id, c.direction, c.phone,
+                           to_char(c.start_time, 'YYYY-MM-DD HH24:MI:SS') AS start,
+                           to_char(c.end_time,   'YYYY-MM-DD HH24:MI:SS') AS end,
+                           c.duration_sec, c.language, c.lead, c.lead_status, c.meeting, c.callback,
+                           c.ended_by, c.recording, c.transcript,
+                           cand.name AS candidate_name,
+                           cand.position AS candidate_position
+                    FROM calls c
+                    JOIN candidates cand ON c.candidate_id = cand.id
+                    WHERE cand.id = %s
+                    ORDER BY c.start_time DESC;
+                """, (candidate_id,))
+                rows = cur.fetchall()
+                result = []
+                for r in rows:
+                    item = dict(r)
+                    if isinstance(item.get("transcript"), str):
+                        try:
+                            item["transcript"] = json.loads(item["transcript"])
+                        except Exception:
+                            item["transcript"] = []
+                    result.append(item)
+                return result
+        except Exception as e:
+            logger.error(f"CallRepository.get_by_candidate_id error: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_transcript(self, call_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve conversation transcript for a call with joined candidate metadata."""
+        call_item = self.get_by_id(call_id)
+        if not call_item:
+            return None
+        return {
+            "found": True,
+            "phone": call_item.get("phone", ""),
+            "direction": call_item.get("direction", ""),
+            "start": call_item.get("start", ""),
+            "candidate_id": call_item.get("candidate_id"),
+            "candidate_name": call_item.get("candidate_name"),
+            "transcript": call_item.get("transcript", []) or [],
+        }
 
 
 class VoiceConfigRepository:

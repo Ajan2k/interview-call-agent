@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from routes import api_router, voice_router
 import logging
 
+import uvicorn
+
 load_dotenv()
 logging.getLogger("main").info(f"Logging to console and {LOG_FILE}")
 
@@ -39,5 +41,4 @@ app.include_router(voice_router)
 app.include_router(api_router)
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

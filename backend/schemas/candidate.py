@@ -4,12 +4,31 @@ from pydantic import BaseModel, Field
 
 class QuestionSchema(BaseModel):
     id: str
+    candidate_id: Optional[str] = None
     category: str = "technical"  # "behavioral" or "technical"
     text: str
     competency: str = ""
     order: int = 1
     completed: bool = False
     answer_notes: Optional[str] = None
+    score: Optional[int] = None
+    feedback: Optional[str] = None
+
+
+class CandidateResponseRecordSchema(BaseModel):
+    id: str
+    candidate_id: str
+    question_id: str
+    category: str = "technical"
+    question_text: str
+    competency: str = ""
+    order_num: int = 1
+    completed: bool = False
+    response_text: Optional[str] = None
+    score: Optional[int] = None
+    feedback: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ScorecardSchema(BaseModel):
@@ -49,5 +68,10 @@ class CandidateResponse(BaseModel):
     updated_at: str
 
 
+class CandidateWithCallsResponse(CandidateResponse):
+    calls: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class QuestionsUpdateRequest(BaseModel):
     questions: List[QuestionSchema]
+

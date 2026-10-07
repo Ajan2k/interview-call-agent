@@ -62,3 +62,4 @@ desktop.ini
 # ─── Testing ──────────────────────────────────────────────────────────────────
 .pytest_cache/
 backend/.pytest_cache/
+backend/docs/

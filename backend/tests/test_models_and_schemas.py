@@ -71,6 +71,51 @@ class TestDomainModels:
         restored = VoiceConfig.from_dict(d)
         assert restored.speech_mode == "Natural Female Voice"
 
+    def test_candidate_response_record_model(self):
+        from models.candidate import CandidateResponseRecord
+        cr = CandidateResponseRecord(
+            id="cand-1_q1",
+            candidate_id="cand-1",
+            question_id="q1",
+            question_text="Explain database normalization.",
+            category="technical",
+            competency="Database Design",
+            order_num=1,
+            completed=True,
+            response_text="Normalization reduces data redundancy.",
+            score=95,
+            feedback="Clear explanation of 3NF.",
+        )
+        d = cr.to_dict()
+        assert d["candidate_id"] == "cand-1"
+        assert d["score"] == 95
+        assert d["completed"] is True
+
+        restored = CandidateResponseRecord.from_dict(d)
+        assert restored.candidate_id == "cand-1"
+        assert restored.score == 95
+        assert restored.response_text == "Normalization reduces data redundancy."
+
+    def test_call_model_with_candidate_tracking(self):
+        call = Call(
+            id="call_20261007_001",
+            direction="outgoing",
+            phone="+919876543210",
+            candidate_id="cand-1",
+            candidate_name="Alice Smith",
+            candidate_position="Senior Backend Engineer",
+            duration_sec=300,
+        )
+        d = call.to_dict()
+        assert d["candidate_id"] == "cand-1"
+        assert d["candidate_name"] == "Alice Smith"
+        assert d["candidate_position"] == "Senior Backend Engineer"
+
+        restored = Call.from_dict(d)
+        assert restored.candidate_id == "cand-1"
+        assert restored.candidate_name == "Alice Smith"
+        assert restored.candidate_position == "Senior Backend Engineer"
+
 
 class TestSchemas:
     def test_candidate_create_schema(self):

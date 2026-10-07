@@ -19,6 +19,9 @@ class Call:
     ended_by: Optional[str] = ""
     recording: Optional[str] = ""
     transcript: List[Dict[str, Any]] = field(default_factory=list)
+    candidate_id: Optional[str] = None
+    candidate_name: Optional[str] = None
+    candidate_position: Optional[str] = None
 
     def resolved_lead_status(self) -> str:
         if self.lead_status:
@@ -45,6 +48,12 @@ class Call:
             "ended_by": self.ended_by or "",
             "recording": self.recording or "",
         }
+        if self.candidate_id is not None:
+            data["candidate_id"] = self.candidate_id
+        if self.candidate_name is not None:
+            data["candidate_name"] = self.candidate_name
+        if self.candidate_position is not None:
+            data["candidate_position"] = self.candidate_position
         if self.transcript is not None:
             data["transcript"] = self.transcript
         return data
@@ -66,4 +75,7 @@ class Call:
             ended_by=data.get("ended_by", ""),
             recording=data.get("recording", ""),
             transcript=data.get("transcript"),
+            candidate_id=data.get("candidate_id"),
+            candidate_name=data.get("candidate_name"),
+            candidate_position=data.get("candidate_position"),
         )

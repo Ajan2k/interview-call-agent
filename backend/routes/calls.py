@@ -41,11 +41,22 @@ def get_call_history():
 
 @router.get("/call-history/{call_id}/transcript")
 def get_call_transcript(call_id: str):
-    """Full conversation transcript for one call."""
+    """Full conversation transcript for one call with candidate metadata."""
     result = call_repo.get_transcript(call_id)
-    if result is None:
-        raise HTTPException(status_code=503, detail="Database unavailable")
-    return result
+    if result is not None:
+        return result
+    for item in _read_jsonl(_CALLS_JSONL):
+        if item.get("id") == call_id:
+            return {
+                "found": True,
+                "phone": item.get("phone", ""),
+                "direction": item.get("direction", ""),
+                "start": item.get("start", ""),
+                "candidate_id": item.get("candidate_id"),
+                "candidate_name": item.get("candidate_name"),
+                "transcript": item.get("transcript", []) or [],
+            }
+    raise HTTPException(status_code=404, detail="Call transcript not found")
 
 
 @router.get("/recordings/{filename}")
